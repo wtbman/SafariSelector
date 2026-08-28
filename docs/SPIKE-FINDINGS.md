@@ -95,3 +95,29 @@ a window is showing. Tab-group labels must come from elsewhere.
 - **Do not edit `project.pbxproj` with line-based tools.** Deleting lines that mention a file
   corrupts multi-line objects such as `PBXVariantGroup`. Convert with
   `plutil -convert xml1`, edit via `plistlib`, and write back as XML — Xcode reads XML pbxproj.
+
+## Becoming a selectable default browser
+
+Claiming the `http`/`https` URL schemes is **not** sufficient to appear in
+*System Settings → Desktop & Dock → Default web browser*. Two further things are required, and
+neither produces any error when missing — the app simply never appears in the list:
+
+1. **Do not set `LSUIElement` in Info.plist.** macOS filters agent apps out of the default browser
+   list. Register as a regular app and call `NSApp.setActivationPolicy(.accessory)` at launch
+   instead; the app is still dockless and menu-bar-only. With `LSUIElement` set, `lsregister -dump`
+   shows `bundle flags: ... ui-element` and the app is excluded.
+2. **Declare `CFBundleDocumentTypes` for `public.html`** with `CFBundleTypeRole = Viewer`. macOS
+   builds the popup from an internal UTI, `com.apple.default-app.web-browser`, which LaunchServices
+   only synthesises for apps that declare they can view HTML.
+
+Verify with:
+
+```bash
+lsregister -dump | grep -A80 'path:.*YourApp.app (' | grep -i 'claimed UTIs'
+# want: com.apple.default-app.web-browser, public.html
+```
+
+Real browsers also declare `http` and `https` as **separate** `CFBundleURLTypes` entries rather
+than one entry listing both schemes; this build follows that convention.
+
+System Settings caches the list — quit it with Cmd-Q and reopen before concluding a change failed.

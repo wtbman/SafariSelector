@@ -61,16 +61,32 @@ Line-based edits corrupt multi-line objects such as `PBXVariantGroup`.
 
 ## Task 3 — App shell as a background agent
 
-`Info.plist`: `LSUIElement = true`, `NSAppleEventsUsageDescription`, and `CFBundleURLTypes` with
-schemes `http`/`https` and `LSHandlerRank = Owner`.
+`Info.plist`: `NSAppleEventsUsageDescription`; `CFBundleURLTypes` with **separate** `http` and
+`https` entries (`LSHandlerRank = Owner`); and `CFBundleDocumentTypes` declaring `public.html`
+with `CFBundleTypeRole = Viewer`.
+
+Two non-obvious requirements for appearing in *Default web browser*, both silent when missing:
+
+- **Do not set `LSUIElement`** — macOS filters agent apps out of that list. Rely on
+  `NSApp.setActivationPolicy(.accessory)` at launch for the dockless behaviour.
+- **Declare `public.html`** — the popup is built from an internal UTI,
+  `com.apple.default-app.web-browser`, which LaunchServices only synthesises for apps that say
+  they can view HTML. Claiming the URL schemes alone is not enough.
 
 **Add an explicit `main.swift`** that constructs `NSApplication`, assigns the delegate, and calls
 `run()`. Do **not** rely on `@main` on the delegate: `NSApplicationMain` installs the delegate from
 the main storyboard, so with no storyboard the app launches, runs, and never calls
 `applicationDidFinishLaunching`.
 
-**Acceptance:** launching the app logs its startup line and stays resident;
-`lsregister -dump | grep -i safariselector` shows it as an `http`/`https` handler.
+**Acceptance:** launching the app logs its startup line and stays resident, and
+
+```bash
+lsregister -dump | grep -A80 'path:.*SafariSelector.app (' | grep -i 'claimed UTIs'
+# must include: com.apple.default-app.web-browser, public.html
+```
+
+Then quit System Settings (Cmd-Q, it caches) and confirm the app is offered under
+*Desktop & Dock → Default web browser*.
 
 ## Task 4 — Bridge server
 

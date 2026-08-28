@@ -25,6 +25,10 @@ final class Config: ObservableObject {
     struct Stored: Codable {
         var profileAliases: [String: String] = [:]
         var rules: [Rule] = []
+        /// Tab group name -> the profile that owns it. A tab group belongs to exactly
+        /// one profile and does not move, so once seen this stays true — and it lets a
+        /// dormant profile's windows still be labelled correctly in the picker.
+        var groupToProfile: [String: String] = [:]
         /// host -> target id, so a repeat visit pre-selects where it went last time.
         var lastChoiceByHost: [String: String] = [:]
         var lastChoice: String?
@@ -50,6 +54,15 @@ final class Config: ObservableObject {
 
     func profileLabel(for uuid: String) -> String? {
         stored.profileAliases[uuid]
+    }
+
+    func learn(group: String, belongsTo profileUUID: String) {
+        guard stored.groupToProfile[group] != profileUUID else { return }
+        stored.groupToProfile[group] = profileUUID
+    }
+
+    func profileOwning(group: String) -> String? {
+        stored.groupToProfile[group]
     }
 
     func rule(for url: URL) -> Rule? {

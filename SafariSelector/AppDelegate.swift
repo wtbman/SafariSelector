@@ -177,10 +177,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(status)
         menu.addItem(NSMenuItem(title: "Refresh Windows",
                                 action: #selector(refresh), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: "Settings…",
+                                action: #selector(showPreferences), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit SafariSelector",
                                 action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        menu.items.forEach { $0.target = $0.action == #selector(refresh) ? self : $0.target }
+        for item in menu.items where item.action == #selector(refresh) || item.action == #selector(showPreferences) {
+            item.target = self
+        }
         item.menu = menu
         statusItem = item
 
@@ -193,5 +197,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func refresh() {
         store.rebuild()
+    }
+
+    private var preferencesWindow: NSWindow?
+
+    @objc private func showPreferences() {
+        store.rebuild()
+        if let existing = preferencesWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+        let view = PreferencesView(config: config, store: store) { [weak self] in
+            self?.bridge.connectedProfiles ?? []
+        }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 380),
+                              styleMask: [.titled, .closable, .miniaturizable],
+                              backing: .buffered, defer: false)
+        window.title = "SafariSelector Settings"
+        window.contentView = NSHostingView(rootView: view)
+        window.center()
+        window.isReleasedWhenClosed = false
+        preferencesWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 }

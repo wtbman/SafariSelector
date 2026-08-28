@@ -81,10 +81,21 @@ final class TargetStore: ObservableObject {
                 ?? String(profile.prefix(8))
         }
 
+        // Learn which profile owns each tab group while we can see it, so the same
+        // window is still labelled correctly later when its profile is dormant.
+        for w in scriptWindows {
+            if let group = w.prefix, let warm = warmByURL[w.activeTabURL] {
+                DispatchQueue.main.async { self.config.learn(group: group, belongsTo: warm.profile) }
+            }
+        }
+
         var out: [SafariTarget] = []
         for w in scriptWindows {
             let warm = warmByURL[w.activeTabURL]
-            let profileLabel = warm.map { labelForProfile[$0.profile] ?? $0.profile } ?? "Other profiles"
+            let owningProfile = warm?.profile ?? w.prefix.flatMap { config.profileOwning(group: $0) }
+            let profileLabel = owningProfile.map { uuid in
+                config.profileLabel(for: uuid) ?? labelForProfile[uuid] ?? String(uuid.prefix(8))
+            } ?? "Unknown profile"
             var groupLabel = w.prefix
             if let g = groupLabel, g.caseInsensitiveCompare(profileLabel) == .orderedSame {
                 groupLabel = nil   // loose-tab window, not a tab group

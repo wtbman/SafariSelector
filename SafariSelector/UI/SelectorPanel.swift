@@ -1,0 +1,64 @@
+import AppKit
+import SwiftUI
+
+/// Floating panel that hosts the picker.
+///
+/// A borderless `NSPanel` that can still become key — the picker is keyboard-first,
+/// so it must accept typing, which a `.nonactivatingPanel` would not.
+final class SelectorPanel: NSPanel {
+
+    private var onDismiss: (() -> Void)?
+
+    init<Content: View>(content: Content, onDismiss: @escaping () -> Void) {
+        self.onDismiss = onDismiss
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
+            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        titleVisibility = .hidden
+        titlebarAppearsTransparent = true
+        isMovableByWindowBackground = true
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
+        isOpaque = false
+        backgroundColor = .clear
+        level = .floating
+        hidesOnDeactivate = false
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+        let hosting = NSHostingView(rootView: content)
+        contentView = hosting
+        setContentSize(hosting.fittingSize)
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+
+    /// Places the panel on whichever screen the pointer is on, slightly above centre.
+    func showCentredOnPointerScreen() {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        if let frame = screen?.visibleFrame {
+            let size = self.frame.size
+            setFrameOrigin(NSPoint(
+                x: frame.midX - size.width / 2,
+                y: frame.midY - size.height / 2 + frame.height * 0.1
+            ))
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        makeKeyAndOrderFront(nil)
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        onDismiss?()
+    }
+
+    func dismiss() {
+        onDismiss = nil
+        orderOut(nil)
+    }
+}

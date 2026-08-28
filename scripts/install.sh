@@ -1,5 +1,8 @@
 #!/bin/bash
-# Builds SafariSelector and installs it to ~/Applications.
+# Builds SafariSelector and installs it to /Applications.
+#
+# /Applications, not ~/Applications: this is where a default browser is expected
+# to live, and it keeps one canonical registration for LaunchServices.
 #
 # DerivedData deliberately lives outside the repo: if the tree is ever hosted in
 # iCloud Drive, its extended attributes break codesigning.
@@ -10,7 +13,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DD="${DD:-/tmp/SafariSelector-DD}"
-DEST="$HOME/Applications/SafariSelector.app"
+DEST="/Applications/SafariSelector.app"
 LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister
 
 echo "==> Building"
@@ -27,6 +30,7 @@ ditto "$DD/Build/Products/Debug/SafariSelector.app" "$DEST"
 codesign -v --strict "$DEST"
 
 echo "==> Registering with LaunchServices"
+"$LSREG" -u "$DEST" 2>/dev/null || true
 "$LSREG" -f -R -trusted "$DEST"
 open "$DEST"
 

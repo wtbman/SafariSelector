@@ -16,11 +16,49 @@ struct PreferencesView: View {
 
     var body: some View {
         TabView {
+            generalTab.tabItem { Label("General", systemImage: "gearshape") }
             profilesTab.tabItem { Label("Profiles", systemImage: "person.2") }
             rulesTab.tabItem { Label("Rules", systemImage: "arrow.triangle.branch") }
         }
         .frame(width: 560, height: 380)
         .onAppear { profiles = knownProfiles().sorted() }
+    }
+
+    // MARK: - General
+
+    @State private var defaultBrowser: String = ""
+
+    private var generalTab: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            GroupBox("Default web browser") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Current: \(defaultBrowser.isEmpty ? "—" : defaultBrowser)")
+                        .font(.system(size: 12))
+                    Text("System Settings will not list SafariSelector in its Default web browser menu — it filters out apps like this one even when they are correctly registered. Use these buttons instead.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button("Make SafariSelector the Default") {
+                            Task { _ = await DefaultBrowser.makeDefault(); refreshDefault() }
+                        }
+                        Button("Restore Safari") {
+                            Task { _ = await DefaultBrowser.restoreSafari(); refreshDefault() }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .onAppear { refreshDefault() }
+    }
+
+    private func refreshDefault() {
+        defaultBrowser = DefaultBrowser.current?
+            .deletingPathExtension().lastPathComponent ?? "unknown"
     }
 
     // MARK: - Profiles

@@ -121,3 +121,24 @@ Real browsers also declare `http` and `https` as **separate** `CFBundleURLTypes`
 than one entry listing both schemes; this build follows that convention.
 
 System Settings caches the list — quit it with Cmd-Q and reopen before concluding a change failed.
+
+### …but System Settings will still not list it
+
+Even with all of the above correct, SafariSelector never appears in
+*System Settings → Desktop & Dock → Default web browser*. That popup applies a further filter of
+its own. LaunchServices itself is perfectly happy:
+
+```swift
+NSWorkspace.shared.urlsForApplications(toOpen: URL(string: "https://example.com")!)
+// -> Safari, SafariSelector, ChatGPT, BetterTouchTool, Firefox
+```
+
+ChatGPT and BetterTouchTool are registered `https` handlers too, and are likewise absent from that
+popup — so this is not something a bundle can declare its way out of.
+
+**The supported path is `NSWorkspace.setDefaultApplication(at:toOpenURLsWithScheme:)`**, which
+raises the system's own confirmation prompt. This works, and is what the app's
+*Settings → General → Make SafariSelector the Default* button calls. Note that macOS prompts once
+and applies the choice to both `http` and `https`, so the second call commonly reports an error
+("The file couldn't be opened") even though the change succeeded — verify by reading the default
+back rather than trusting the callback.

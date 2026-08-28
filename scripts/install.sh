@@ -4,8 +4,8 @@
 # /Applications, not ~/Applications: this is where a default browser is expected
 # to live, and it keeps one canonical registration for LaunchServices.
 #
-# DerivedData deliberately lives outside the repo: if the tree is ever hosted in
-# iCloud Drive, its extended attributes break codesigning.
+# DerivedData deliberately lives outside the repo: extended attributes from synced
+# or network volumes break codesigning.
 #
 # Do not re-sign the installed bundle with `codesign --deep` — that strips the
 # appex entitlements and pluginkit then silently refuses to register the extension.

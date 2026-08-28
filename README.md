@@ -31,7 +31,15 @@ xcodebuild -project SafariSelector.xcodeproj -scheme SafariSelector \
   -configuration Debug -derivedDataPath /tmp/SafariSelector-DD build
 ```
 
-**Do not host this repo in iCloud Drive.** It was moved out for two reasons: iCloud's extended
-attributes break codesigning (`resource fork, Finder information, or similar detritus not
-allowed`), and macOS privacy controls can revoke a process's access to `~/Library/Mobile
-Documents` mid-session, which makes the working tree unreadable.
+Keep `-derivedDataPath` outside the repo. Some filesystems attach extended attributes that make
+codesigning fail with `resource fork, Finder information, or similar detritus not allowed`.
+
+Then install it:
+
+```bash
+./scripts/install.sh
+```
+
+## Licence
+
+GNU General Public License v3.0 — see [LICENSE](LICENSE).

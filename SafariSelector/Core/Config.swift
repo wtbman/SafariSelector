@@ -1,3 +1,13 @@
+//
+//  SafariSelector — open links in a chosen Safari window's active tab group.
+//  Copyright (C) 2026 SafariSelector contributors
+//
+//  This program is free software: you can redistribute it and/or modify it under
+//  the terms of the GNU General Public License as published by the Free Software
+//  Foundation, either version 3 of the License, or (at your option) any later
+//  version. See <https://www.gnu.org/licenses/>.
+//
+
 import Foundation
 import Combine
 

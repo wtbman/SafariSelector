@@ -61,8 +61,9 @@ a window is showing. Tab-group labels must come from elsewhere.
 
 ## Environment gotchas
 
-- **Never build inside iCloud Drive.** Codesigning fails with `resource fork, Finder information,
-  or similar detritus not allowed`. Always pass a `-derivedDataPath` outside the tree.
+- **Never build into a directory that attaches extended attributes** (network or synced volumes
+  are the usual culprits). Codesigning fails with `resource fork, Finder information, or similar
+  detritus not allowed`. Always pass a `-derivedDataPath` outside the tree.
 - **No codesigning identity exists on this machine** (`security find-identity` → `0 valid
   identities found`). Builds are ad-hoc signed, requiring Safari's *Develop → Allow Unsigned
   Extensions* — which resets on every Safari relaunch.

@@ -9,10 +9,9 @@ for the measured behaviour every decision here rests on.
 ## Preconditions
 
 - macOS 14+ (developed on 26.4.1), Xcode 26+, Safari 17+ (developed on 26.4).
-- **The repo must not live in iCloud Drive.** Its extended attributes break codesigning
-  (`resource fork, Finder information, or similar detritus not allowed`), and macOS can revoke a
-  process's access to `~/Library/Mobile Documents` mid-session.
-- Keep DerivedData outside the repo: `-derivedDataPath /tmp/SafariSelector-DD`.
+- Keep DerivedData outside the repo: `-derivedDataPath /tmp/SafariSelector-DD`. Building into a
+  directory whose filesystem attaches extended attributes makes codesigning fail with
+  `resource fork, Finder information, or similar detritus not allowed`.
 - If there is no Developer ID (`security find-identity -v -p codesigning` → `0 valid identities`),
   build ad-hoc with `CODE_SIGN_IDENTITY="-"` and expect to use Safari's
   *Develop → Allow Unsigned Extensions*.

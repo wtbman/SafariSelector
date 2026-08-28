@@ -75,3 +75,23 @@ a window is showing. Tab-group labels must come from elsewhere.
 - The generated project's appex bundle id must be prefixed by the app's bundle id, or
   `ValidateEmbeddedBinary` fails.
 - `MACOSX_DEPLOYMENT_TARGET` must be ≥ 14.0 for `SFExtensionProfileKey`.
+
+## Follow-up findings (app build)
+
+- **Safari web extension appexes must be sandboxed.** With `ENABLE_APP_SANDBOX = NO` on the
+  extension target, `pluginkit` silently refuses to register the extension — it simply never
+  appears in the list, with no error anywhere. Re-enabling the sandbox fixed it immediately.
+  - *Consequence:* the appex cannot read `~/Library/Application Support/SafariSelector/bridge.json`,
+    so the shared auth token cannot reach the extension this way. The bridge accepts token-less
+    instances and relies on binding to loopback only. Closing this properly would need an App
+    Group container shared between the app and the appex.
+- **`@main` on an `NSApplicationDelegate` does not install the delegate** when there is no
+  storyboard. `NSApplicationMain` gets the delegate from the main storyboard, so a background
+  agent with `INFOPLIST_KEY_NSMainStoryboardFile` removed launches, runs, and never calls
+  `applicationDidFinishLaunching`. An explicit `main.swift` that sets `app.delegate` is required.
+- **`NWParameters.requiredLocalEndpoint` is the wrong knob for a listener** — combined with
+  `allowLocalEndpointReuse`, binding loopback works, but the listener's `stateUpdateHandler` is
+  the only place failures surface. Without it, a failed bind is completely silent.
+- **Do not edit `project.pbxproj` with line-based tools.** Deleting lines that mention a file
+  corrupts multi-line objects such as `PBXVariantGroup`. Convert with
+  `plutil -convert xml1`, edit via `plistlib`, and write back as XML — Xcode reads XML pbxproj.

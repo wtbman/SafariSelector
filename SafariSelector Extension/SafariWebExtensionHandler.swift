@@ -13,8 +13,11 @@ import os.log
 /// WebExtension API exposes profile identity, so this is the only way an instance can
 /// tell the app *which profile* it speaks for.
 ///
-/// It also hands back the shared auth token, read from the app's bridge file. That
-/// read is why this target is not sandboxed.
+/// It also attempts to hand back the app's shared auth token. In practice that read
+/// usually fails: Safari requires web extension appexes to be sandboxed (pluginkit
+/// silently refuses to register an unsandboxed one), so this process cannot see
+/// ~/Library/Application Support. The bridge therefore accepts token-less instances
+/// and relies on being bound to loopback only. See docs/SPIKE-FINDINGS.md.
 class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
 
     func beginRequest(with context: NSExtensionContext) {

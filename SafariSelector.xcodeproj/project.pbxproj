@@ -964,7 +964,7 @@
 				<key>CURRENT_PROJECT_VERSION</key>
 				<string>1</string>
 				<key>ENABLE_APP_SANDBOX</key>
-				<string>NO</string>
+				<string>YES</string>
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>ENABLE_USER_SELECTED_FILES</key>
@@ -1023,7 +1023,7 @@
 				<key>CURRENT_PROJECT_VERSION</key>
 				<string>1</string>
 				<key>ENABLE_APP_SANDBOX</key>
-				<string>NO</string>
+				<string>YES</string>
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>ENABLE_USER_SELECTED_FILES</key>

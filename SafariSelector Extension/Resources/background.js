@@ -74,9 +74,24 @@ function schedulePush() {
 async function execute(cmd) {
   switch (cmd.type) {
     case "OPEN": {
-      const tab = await api.tabs.create({ windowId: cmd.windowId, url: cmd.url, active: true });
-      await api.windows.update(cmd.windowId, { focused: true });
-      return { ok: true, tabId: tab.id, windowId: tab.windowId };
+      // Window ids are not durable: Safari reassigns them when this worker restarts,
+      // so an id from an earlier snapshot can name a window that no longer exists.
+      // Validate it, and fall back to the focused window — the app focuses the
+      // intended window immediately before sending this, so that is the right one.
+      let windowId = cmd.windowId;
+      try {
+        if (windowId != null) await api.windows.get(windowId);
+      } catch (e) {
+        windowId = null;
+      }
+      if (windowId == null) {
+        const focused = await api.windows.getLastFocused();
+        windowId = focused.id;
+      }
+      const tab = await api.tabs.create({ windowId, url: cmd.url, active: true });
+      await api.windows.update(windowId, { focused: true });
+      // Report the id actually used so the app can refresh its view.
+      return { ok: true, tabId: tab.id, windowId: tab.windowId, usedFallback: windowId !== cmd.windowId };
     }
     case "OPEN_NEW_WINDOW": {
       const win = await api.windows.create({ url: cmd.url });

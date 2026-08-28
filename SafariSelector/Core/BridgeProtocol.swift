@@ -42,6 +42,9 @@ enum Bridge {
         var tabId: Int?
         var windowId: Int?
         var error: String?
+        /// True when the extension had to ignore the supplied window id because it
+        /// had gone stale, and used the focused window instead.
+        var usedFallback: Bool?
     }
 
     struct ResultEnvelope: Codable {

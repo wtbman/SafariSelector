@@ -27,9 +27,20 @@ final class Opener {
             return
         }
         let command = Bridge.Command.open(windowId: warm.windowId, url: url.absoluteString)
+        // Focus the intended window first. This keeps the extension's fallback
+        // correct if the window id has gone stale, and matches what the user just
+        // picked: the tab lands in the window they are looking at.
+        if let scriptID = target.appleScriptWindowID {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                AppleScriptProbe.queue.async {
+                    AppleScriptProbe.focus(windowID: scriptID)
+                    c.resume()
+                }
+            }
+        }
         DebugLog.write("sending OPEN windowId=\(warm.windowId) profile=\(warm.profileUUID)")
         let result = await bridge.send(command, to: warm.profileUUID)
-        DebugLog.write("OPEN result: ok=\(result?.ok ?? false) err=\(result?.error ?? "-")")
+        DebugLog.write("OPEN result: ok=\(result?.ok ?? false) err=\(result?.error ?? "-") fallback=\(result?.usedFallback ?? false)")
         guard let result, result.ok else {
             log.error("open failed: \(result?.error ?? "no response", privacy: .public)")
             openInSafariDirectly(url)

@@ -30,10 +30,19 @@ struct SafariTarget: Identifiable, Hashable {
     /// True once this target can be opened into without waking anything.
     var isWarm: Bool { profileUUID != nil && windowId != nil }
 
-    /// Stable across cold→warm transitions, so selection does not jump when a
-    /// profile wakes mid-picker. The active tab URL is the same key the two views
-    /// are correlated on.
-    var id: String { activeTabURL.isEmpty ? "as:\(appleScriptWindowID ?? -1)" : activeTabURL }
+    /// Stable identity of a *destination*, not of a moment.
+    ///
+    /// Keyed on the tab group, because that is what the user is actually choosing and
+    /// it survives everything volatile: WebExtension window ids are reassigned when a
+    /// background worker restarts, and the active tab URL changes the instant a tab is
+    /// opened. Windows showing loose tabs have no group, so they fall back to the
+    /// AppleScript window id, which at least lasts a Safari session.
+    var id: String {
+        if let group = tabGroupLabel {
+            return "group:\(profileUUID ?? "?"):\(group)"
+        }
+        return "window:\(appleScriptWindowID ?? -1)"
+    }
 
     var displayLabel: String { tabGroupLabel ?? "Loose tabs" }
 

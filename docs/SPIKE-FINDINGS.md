@@ -142,3 +142,31 @@ raises the system's own confirmation prompt. This works, and is what the app's
 and applies the choice to both `http` and `https`, so the second call commonly reports an error
 ("The file couldn't be opened") even though the change succeeded — verify by reading the default
 back rather than trusting the callback.
+
+## WebExtension window ids are not durable
+
+Safari reassigns `windowId` values when an extension's background worker restarts — observed
+climbing 10522 → 18810 → 34480 → 35551 → 40778 for the *same* window within one session. A window
+id captured in an earlier snapshot can therefore name a window that no longer exists, and
+`tabs.create` fails with:
+
+```
+Invalid call to tabs.create(). Window not found.
+```
+
+Because the app fails open, that surfaced as the worst possible symptom: the link opened in
+Safari's generic last-used window, exactly the behaviour the whole project exists to prevent.
+
+Mitigations, all three applied:
+
+1. The extension **validates the window id** with `windows.get` before using it, and falls back to
+   `windows.getLastFocused()`.
+2. The app **focuses the intended window via AppleScript immediately before sending `OPEN`**, so
+   that fallback resolves to the right window. AppleScript window ids are stable within a Safari
+   session, unlike WebExtension ids.
+3. `SafariTarget.id` is keyed on the **tab group**, not the window id or the active tab URL —
+   both of which change constantly. This is what routing rules and last-choice memory persist.
+
+Related trap: `NSAppleScript.executeAndReturnError` returns a descriptor whose `stringValue` is
+`nil` for a script with no result. Treating that as failure made a working `focus` call look
+broken. Return `""` on success and reserve `nil` for a real error.

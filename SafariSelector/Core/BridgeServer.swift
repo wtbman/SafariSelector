@@ -82,7 +82,7 @@ final class BridgeServer {
     /// Hands `command` to the given profile's instance and waits for its result.
     /// Returns nil if that profile is not currently polling, or if it doesn't answer.
     func send(_ command: Bridge.Command, to profileUUID: String,
-              timeout: TimeInterval = 5) async -> Bridge.CommandResult? {
+              timeout: TimeInterval = 12) async -> Bridge.CommandResult? {
         await withCheckedContinuation { continuation in
             queue.async {
                 var settled = false

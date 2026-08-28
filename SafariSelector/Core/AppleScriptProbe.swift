@@ -71,7 +71,7 @@ enum AppleScriptProbe {
         let ok = run("""
         tell application "Safari"
             activate
-            set index of (first window whose id is \(windowID)) to 1
+            set index of window id \(windowID) to 1
         end tell
         """)
         DebugLog.write("focus(window \(windowID)) -> \(ok == nil ? "FAILED" : "ok")")
@@ -82,9 +82,14 @@ enum AppleScriptProbe {
         guard let apple = NSAppleScript(source: source) else { return nil }
         let out = apple.executeAndReturnError(&error)
         if let error {
-            log.warning("AppleScript failed: \(String(describing: error), privacy: .public)")
+            let message = (error[NSAppleScript.errorMessage] as? String) ?? String(describing: error)
+            let number = (error[NSAppleScript.errorNumber] as? Int).map(String.init) ?? "?"
+            log.warning("AppleScript failed (\(number, privacy: .public)): \(message, privacy: .public)")
+            DebugLog.write("AppleScript error \(number): \(message)")
             return nil
         }
-        return out.stringValue
+        // Empty string, not nil, when the script simply has no result — nil is
+        // reserved for an actual error so callers can tell the two apart.
+        return out.stringValue ?? ""
     }
 }

@@ -6,19 +6,44 @@ final class Config: ObservableObject {
 
     struct Rule: Codable, Identifiable, Hashable {
         var id = UUID()
-        /// Host glob, e.g. "*.example.com".
+        /// What to match. A bare host (`tickets.example.com`), a host glob
+        /// (`*.example.com`), or a whole URL pasted straight in — people
+        /// naturally paste the link they want routed, and rejecting that silently
+        /// is worse than accepting it.
         var pattern: String
         var profileUUID: String
         /// Resolved to a live window at open time, so the rule survives window churn.
         var tabGroupLabel: String?
 
-        func matches(host: String) -> Bool {
-            let p = pattern.lowercased(), h = host.lowercased()
+        func matches(_ url: URL) -> Bool {
+            let raw = pattern.trimmingCharacters(in: .whitespaces).lowercased()
+            guard !raw.isEmpty else { return false }
+
+            // Strip a scheme if one was pasted in.
+            var p = raw
+            for scheme in ["https://", "http://"] where p.hasPrefix(scheme) {
+                p = String(p.dropFirst(scheme.count))
+            }
+            guard let host = url.host?.lowercased() else { return false }
+
+            // A pattern with a path is matched against host+path, so a pasted URL
+            // routes that page (and anything beneath it) rather than never matching.
+            if p.contains("/") {
+                let subject = host + url.path.lowercased()
+                let prefix = p.hasSuffix("/") ? String(p.dropLast()) : p
+                return subject == prefix
+                    || subject.hasPrefix(prefix + "/")
+                    || Config.glob(p, matches: subject)
+            }
+
             if p.hasPrefix("*.") {
                 let suffix = String(p.dropFirst(2))
-                return h == suffix || h.hasSuffix("." + suffix)
+                return host == suffix || host.hasSuffix("." + suffix)
             }
-            return h == p
+            if p.contains("*") || p.contains("?") {
+                return Config.glob(p, matches: host)
+            }
+            return host == p || host.hasSuffix("." + p)
         }
     }
 
@@ -109,8 +134,7 @@ final class Config: ObservableObject {
     }
 
     func rule(for url: URL) -> Rule? {
-        guard let host = url.host else { return nil }
-        return stored.rules.first { $0.matches(host: host) }
+        stored.rules.first { $0.matches(url) }
     }
 
     func rememberChoice(_ target: SafariTarget, for url: URL) {

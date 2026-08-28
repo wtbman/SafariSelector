@@ -39,9 +39,9 @@ struct PreferencesView: View {
             GroupBox("Default web browser") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Current: \(defaultBrowser.isEmpty ? "—" : defaultBrowser)")
-                        .font(.system(size: 12))
+                        .font(.system(size: 15))
                     Text("System Settings will not list SafariSelector in its Default web browser menu — it filters out apps like this one even when they are correctly registered. Use these buttons instead.")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {
@@ -76,7 +76,7 @@ struct PreferencesView: View {
                             .disabled(config.stored.autoSelectSeconds == 0)
                     }
                     Text("Matched against \u{201C}profile — tab group\u{201D}, case-insensitively. Use * and ? as wildcards; text with no wildcard matches anywhere in the name. Deliberately text rather than a fixed window, so it keeps working as windows come and go.")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(autoPreview)
@@ -100,17 +100,17 @@ struct PreferencesView: View {
                                 refreshGuard()
                             }))
                     Text("Safari resets this every time it launches, which silently disables the extension and sends links to the wrong window. Turning this on lets SafariSelector switch it back, which needs Accessibility permission. Not needed once the app is signed with a Developer ID and notarized, which requires paid Apple Developer Program membership.")
-                        .font(.system(size: 11))
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 10) {
-                        Text(guardStatus).font(.system(size: 12, weight: .medium))
+                        Text(guardStatus).font(.system(size: 15, weight: .medium))
                         if !UnsignedExtensionsGuard.hasAccessibilityPermission {
                             Button("Grant Accessibility…") {
                                 UnsignedExtensionsGuard.requestAccessibilityPermission()
                                 refreshGuard()
                             }
-                            .font(.system(size: 11))
+                            .font(.system(size: 13))
                         }
                         Button("Check now") {
                             let outcome = UnsignedExtensionsGuard.ensureEnabled()
@@ -118,11 +118,11 @@ struct PreferencesView: View {
                             lastCheck = "Checked at \(time): \(outcome.message)"
                             refreshGuard()
                         }
-                        .font(.system(size: 11))
+                        .font(.system(size: 13))
                     }
                     if !lastCheck.isEmpty {
                         Text(lastCheck)
-                            .font(.system(size: 12))
+                            .font(.system(size: 15))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -176,9 +176,9 @@ struct PreferencesView: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Name each Safari profile. Safari identifies profiles only by UUID, so these names are yours to set.")
-                    .font(.system(size: 13))
+                    .font(.system(size: 16))
                 Text("A profile only appears here once Safari has run its extension in that profile. Safari starts an extension\u{2019}s background worker on activity, so after this app or Safari restarts, click a window in each profile, then press Refresh. Profiles missing from this list still show up in the picker — they are woken automatically when you pick one.")
-                    .font(.system(size: 12))
+                    .font(.system(size: 15))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -196,12 +196,12 @@ struct PreferencesView: View {
                             TextField("Profile name", text: binding(for: uuid))
                                 .textFieldStyle(.roundedBorder)
                             Text(uuid)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: 13, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Text(windowSummary(uuid))
-                            .font(.system(size: 13))
+                            .font(.system(size: 16))
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 2)
@@ -227,35 +227,43 @@ struct PreferencesView: View {
     // MARK: - Rules
 
     private var rulesTab: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Links matching a rule skip the picker. Rules name a tab group rather than a window, so they survive windows being opened and closed.")
-                .font(.system(size: 13))
+                .font(.system(size: 16))
+            Text("Match a host (tickets.example.com), a wildcard (*.example.com), or paste a whole link to route that page and everything under it.")
+                .font(.system(size: 14))
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             List {
                 ForEach($config.stored.rules) { $rule in
-                    HStack(spacing: 8) {
-                        TextField("*.example.com", text: $rule.pattern)
+                    HStack(spacing: 10) {
+                        TextField("tickets.example.com", text: $rule.pattern)
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 190)
+                            .font(.system(size: 14))
+                            .frame(minWidth: 240)
                         Text("→").foregroundStyle(.secondary)
                         Picker("", selection: Binding(
-                            get: { "\(rule.profileUUID)|\(rule.tabGroupLabel ?? "")" },
-                            set: { combined in
-                                let parts = combined.split(separator: "|", maxSplits: 1,
-                                                           omittingEmptySubsequences: false)
-                                rule.profileUUID = String(parts.first ?? "")
-                                let group = parts.count > 1 ? String(parts[1]) : ""
-                                rule.tabGroupLabel = group.isEmpty ? nil : group
+                            get: { rule.tabGroupLabel ?? "" },
+                            set: { label in
+                                rule.tabGroupLabel = label.isEmpty ? nil : label
+                                // Keep the owning profile in step. A cold target has no
+                                // profile of its own, so fall back to what the app
+                                // learned about which profile owns that tab group.
+                                if let owner = store.targets.first(where: { $0.tabGroupLabel == label })?.profileUUID
+                                    ?? config.profileOwning(group: label) {
+                                    rule.profileUUID = owner
+                                }
                             }
                         )) {
-                            ForEach(store.targets) { t in
-                                Text("\(t.profileLabel) — \(t.displayLabel)")
-                                    .tag("\(t.profileUUID ?? "")|\(t.tabGroupLabel ?? "")")
+                            ForEach(groupOptions(including: rule.tabGroupLabel), id: \.self) { label in
+                                Text(label).tag(label)
                             }
                         }
                         .labelsHidden()
+                        .font(.system(size: 14))
                     }
+                    .padding(.vertical, 3)
                 }
                 .onDelete { config.stored.rules.remove(atOffsets: $0) }
             }
@@ -271,10 +279,21 @@ struct PreferencesView: View {
                 }
                 Spacer()
                 Text("Select a rule and press Delete to remove it.")
-                    .font(.system(size: 10))
+                    .font(.system(size: 16))
                     .foregroundStyle(.secondary)
             }
         }
         .padding(14)
     }
+
+    /// Tab groups to choose from. Always includes whatever the rule already points
+    /// at, even if that window is closed or its profile is dormant — otherwise the
+    /// menu shows blank and looks like the setting was lost.
+    private func groupOptions(including current: String?) -> [String] {
+        var labels = Set(store.targets.compactMap(\.tabGroupLabel))
+        labels.formUnion(config.stored.groupToProfile.keys)
+        if let current, !current.isEmpty { labels.insert(current) }
+        return labels.sorted()
+    }
+
 }

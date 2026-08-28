@@ -107,6 +107,32 @@ response, a window closed underneath us, an unexpected scheme — the URL is han
 way the system would have. A dropped click is the one unacceptable outcome, so every failure path
 in `Opener` ends at `openInSafariDirectly`.
 
+## Auto-select
+
+If the picker sits untouched for a configurable number of seconds, it can choose a window on its
+own. The target is expressed as **text matched against "profile — tab group"**, not as a stored
+window: WebExtension window ids are reassigned constantly and even profile UUIDs are opaque, but
+`Work*` keeps meaning what you meant. Matching is a case-insensitive glob (`*`, `?`); a pattern
+with no wildcard is a substring search.
+
+If the pattern matches nothing, the picker stays open rather than guessing — opening a link
+somewhere arbitrary is worse than waiting. Settings previews the current match live, so a typo is
+obvious there rather than ten seconds into a link going somewhere unexpected. Any keystroke,
+filter edit, or click cancels the countdown.
+
+## Where the link came from
+
+The picker names the app the link arrived from. `application(_:open:)` does not say, so it is
+resolved in three steps:
+
+1. The **sender pid on the Apple Event** that carried the URL (`keySenderPIDAttr`). Authoritative,
+   and the only one that identifies an app which opened a link without ever coming to the front —
+   the case that matters for links fired automatically by an AI assistant.
+2. The current frontmost application, ignoring this app.
+3. The last application to be frontmost that wasn't this one, tracked continuously — LaunchServices
+   often activates this app before delivering the URL, which makes the frontmost app useless by
+   itself.
+
 ## Known limitations
 
 - **The bridge is unauthenticated.** Safari requires web-extension appexes to be sandboxed, so

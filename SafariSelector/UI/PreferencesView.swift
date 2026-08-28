@@ -50,10 +50,57 @@ struct PreferencesView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(6)
             }
+            GroupBox("Auto-select") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Choose a window automatically if I don't pick one", isOn: Binding(
+                        get: { config.stored.autoSelectSeconds > 0 },
+                        set: { config.stored.autoSelectSeconds = $0 ? 10 : 0 }
+                    ))
+                    HStack(spacing: 6) {
+                        Text("After")
+                        TextField("", value: Binding(
+                            get: { config.stored.autoSelectSeconds },
+                            set: { config.stored.autoSelectSeconds = max(0, $0) }
+                        ), format: .number)
+                            .frame(width: 46)
+                            .disabled(config.stored.autoSelectSeconds == 0)
+                        Text("seconds, open in")
+                        TextField("Work*", text: $config.stored.autoSelectPattern)
+                            .frame(width: 190)
+                            .disabled(config.stored.autoSelectSeconds == 0)
+                    }
+                    Text("Matched against \u{201C}profile — tab group\u{201D}, case-insensitively. Use * and ? as wildcards; text with no wildcard matches anywhere in the name. Deliberately text rather than a fixed window, so it keeps working as windows come and go.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(autoPreview)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(autoPreviewIsMatch ? .green : .orange)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+            }
             Spacer()
         }
         .padding(14)
         .onAppear { refreshDefault() }
+    }
+
+    private var autoPreviewIsMatch: Bool {
+        config.autoSelectTarget(from: store.targets) != nil
+    }
+
+    /// Shows what the pattern would pick right now, so a typo is obvious here rather
+    /// than ten seconds into a link opening somewhere unexpected.
+    private var autoPreview: String {
+        guard config.stored.autoSelectSeconds > 0 else { return " " }
+        guard !config.stored.autoSelectPattern.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return "No pattern set — the picker will stay open."
+        }
+        if let t = config.autoSelectTarget(from: store.targets) {
+            return "Currently matches: \(t.matchHaystack)"
+        }
+        return "Matches nothing right now — the picker will stay open rather than guess."
     }
 
     private func refreshDefault() {

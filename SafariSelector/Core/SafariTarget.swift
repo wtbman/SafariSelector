@@ -49,6 +49,11 @@ struct SafariTarget: Identifiable, Hashable {
 
     var displayLabel: String { tabGroupLabel ?? "Loose tabs" }
 
+    /// What the auto-select pattern is matched against.
+    var matchHaystack: String {
+        "\(profileLabel) — \(tabGroupLabel ?? "loose tabs")"
+    }
+
     var searchHaystack: String {
         [profileLabel, tabGroupLabel ?? "loose tabs", activeTabTitle, activeTabURL]
             .joined(separator: " ")

@@ -1,10 +1,16 @@
 import SwiftUI
+import Combine
 
 /// The picker. Keyboard-first: type to filter, arrows to move, digits to jump,
 /// Return to open, Escape to cancel.
 struct SelectorView: View {
     let url: URL
     let targets: [SafariTarget]
+    /// Which app the link came from, when it could be determined.
+    let source: LinkSource.Info?
+    /// Seconds before auto-selecting `autoTarget`; zero disables the countdown.
+    let autoSelectSeconds: Int
+    let autoTarget: SafariTarget?
     let onChoose: (SafariTarget) -> Void
     let onNewWindow: (SafariTarget) -> Void
     let onFallback: () -> Void
@@ -12,7 +18,17 @@ struct SelectorView: View {
 
     @State private var filter = ""
     @State private var selection = 0
+    @State private var remaining: Int = 0
+    @State private var countdownCancelled = false
     @FocusState private var focused: Bool
+
+    // Type scale. Sized for a 4K display, where the defaults are unreadably small.
+    private let urlSize: CGFloat = 22       // 200% of the original 11
+    private let titleSize: CGFloat = 17.5   // 135% of the original 13
+    private let subtitleSize: CGFloat = 15  // 135% of the original 11
+    private let digitSize: CGFloat = 25     // 250% of the original 10
+
+    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var filtered: [SafariTarget] {
         guard !filter.isEmpty else { return targets }
@@ -34,24 +50,42 @@ struct SelectorView: View {
             Divider()
             footer
         }
-        .frame(width: 520)
+        .frame(width: 680)
         .background(.regularMaterial)
         .onKeyPress(action: onKey)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            remaining = autoTarget == nil ? 0 : autoSelectSeconds
+        }
+        .onReceive(tick) { _ in
+            guard !countdownCancelled, remaining > 0, let autoTarget else { return }
+            remaining -= 1
+            if remaining == 0 { onChoose(autoTarget) }
+        }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
+            if let source {
+                HStack(spacing: 6) {
+                    if let icon = source.icon {
+                        Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+                    }
+                    Text("from \(source.name)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
             Text(url.absoluteString)
-                .font(.system(size: 11, design: .monospaced))
-                .lineLimit(1)
+                .font(.system(size: urlSize, design: .monospaced))
+                .lineLimit(2)
                 .truncationMode(.middle)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             TextField("Filter windows…", text: $filter)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(.system(size: 18))
                 .focused($focused)
-                .onChange(of: filter) { selection = 0 }
+                .onChange(of: filter) { selection = 0; countdownCancelled = true }
                 .onSubmit { choose() }
         }
         .padding(12)
@@ -79,9 +113,9 @@ struct SelectorView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(grouped, id: \.profile) { group in
                         Text(group.profile.uppercased())
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.secondary)
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, 14)
                             .padding(.top, 8)
                             .padding(.bottom, 2)
                         ForEach(group.items) { target in
@@ -91,7 +125,7 @@ struct SelectorView: View {
                     }
                 }
             }
-            .frame(maxHeight: 340)
+            .frame(maxHeight: 440)
             .onChange(of: selection) {
                 if let t = flat.indices.contains(selection) ? flat[selection] : nil {
                     proxy.scrollTo(t.id)
@@ -113,46 +147,56 @@ struct SelectorView: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(target.displayLabel)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: titleSize, weight: .medium))
                 Text(target.activeTabTitle.isEmpty ? target.activeTabURL : target.activeTabTitle)
-                    .font(.system(size: 11))
+                    .font(.system(size: subtitleSize))
                     .foregroundStyle(isSelected ? Color.white.opacity(0.8) : .secondary)
                     .lineLimit(1)
             }
             Spacer()
             if index < 9 {
                 Text("\(index + 1)")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(isSelected ? AnyShapeStyle(Color.white.opacity(0.7)) : AnyShapeStyle(.tertiary))
+                    .font(.system(size: digitSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isSelected ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+                    .frame(minWidth: digitSize)
             }
             Text("\(target.tabCount)")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.system(size: subtitleSize - 3, design: .monospaced))
                 .foregroundStyle(isSelected ? AnyShapeStyle(Color.white.opacity(0.7)) : AnyShapeStyle(.tertiary))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
         .background(isSelected ? Color.accentColor : .clear)
         .foregroundStyle(isSelected ? Color.white : .primary)
         .contentShape(Rectangle())
-        .onTapGesture { selection = index; choose() }
+        .onTapGesture { countdownCancelled = true; selection = index; choose() }
     }
 
     private var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
+            if let autoTarget, remaining > 0, !countdownCancelled {
+                HStack(spacing: 5) {
+                    Image(systemName: "timer")
+                    Text("\(autoTarget.displayLabel) in \(remaining)s")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.orange)
+                Divider().frame(height: 12)
+            }
             hint("↑↓", "move")
             hint("⌘1–9", "jump")
             hint("⏎", "open")
             hint("⌘⏎", "new window")
             hint("esc", "cancel")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
     }
 
     private func hint(_ key: String, _ label: String) -> some View {
         HStack(spacing: 3) {
-            Text(key).font(.system(size: 10, weight: .semibold, design: .monospaced))
-            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(key).font(.system(size: 12, weight: .semibold, design: .monospaced))
+            Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
         }
     }
 
@@ -162,6 +206,8 @@ struct SelectorView: View {
     /// as text, and jumps are bound to Command-digit so plain digits stay typable
     /// into the filter.
     private func onKey(_ press: KeyPress) -> KeyPress.Result {
+        // Any deliberate keystroke means the user is choosing; stop the clock.
+        countdownCancelled = true
         if press.modifiers.contains(.command) {
             if press.key == .return {
                 if flat.indices.contains(selection) { onNewWindow(flat[selection]) }

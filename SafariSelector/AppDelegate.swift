@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: TargetStore!
     private var opener: Opener!
     private var panel: SelectorPanel?
+    private var pendingSource: LinkSource.Info?
     private var statusItem: NSStatusItem?
 
     /// This app is the system's default browser. It must never route to itself.
@@ -56,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return (try? JSONSerialization.data(withJSONObject: payload,
                                                 options: [.prettyPrinted, .sortedKeys])) ?? Data("[]".utf8)
         }
+        LinkSource.beginTracking()
         bridge.start()
         opener = Opener(bridge: bridge, store: store)
         setUpStatusItem()
@@ -64,7 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - URL entry point
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        DebugLog.write("open urls: \(urls.map(\.absoluteString))")
+        // Must be read now, while the Apple Event that carried the URL still exists.
+        let source = LinkSource.current()
+        DebugLog.write("open urls: \(urls.map(\.absoluteString)) from: \(source?.name ?? "unknown")")
+        pendingSource = source
         let webURLs = urls.filter { ($0.scheme == "http" || $0.scheme == "https") }
         // Anything else LaunchServices hands us is not ours to mediate.
         for other in urls where !webURLs.contains(other) {
@@ -141,6 +146,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let view = SelectorView(
             url: url,
             targets: targets,
+            source: pendingSource,
+            autoSelectSeconds: config.stored.autoSelectSeconds,
+            autoTarget: config.stored.autoSelectSeconds > 0
+                ? config.autoSelectTarget(from: targets) : nil,
             onChoose: { [weak self] target in
                 created?.dismiss(); self?.panel = nil
                 self?.open(batch, in: target, remember: true)

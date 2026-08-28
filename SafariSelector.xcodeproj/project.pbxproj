@@ -120,6 +120,13 @@
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
+		<key>7201A69121C348F4BA720F60</key>
+		<dict>
+			<key>fileRef</key>
+			<string>B15741569CA6474C832142F9</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>861176164C304865AAC2C411</key>
 		<dict>
 			<key>isa</key>
@@ -170,6 +177,19 @@
 			<string>Config.swift</string>
 			<key>path</key>
 			<string>Core/Config.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>B15741569CA6474C832142F9</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>name</key>
+			<string>LinkSource.swift</string>
+			<key>path</key>
+			<string>Core/LinkSource.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
@@ -355,6 +375,7 @@
 				<string>1813BFEB9D1845C0A373BC02</string>
 				<string>544C197DC0DB4879A83C424D</string>
 				<string>BF5AFD51399E43198317BC03</string>
+				<string>7201A69121C348F4BA720F60</string>
 			</array>
 			<key>isa</key>
 			<string>PBXSourcesBuildPhase</string>
@@ -467,6 +488,7 @@
 				<string>BD6476F7B5F9495CA0054007</string>
 				<string>97E4A47ECDB54F42A5449CC1</string>
 				<string>6DA5AECC26914E94A245E682</string>
+				<string>B15741569CA6474C832142F9</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>

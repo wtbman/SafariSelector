@@ -22,6 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FileHandle.standardError.write(Data("SafariSelector launched\n".utf8))
+        // Re-assert here as well as in main.swift. Setting the policy before the app
+        // has finished launching does not reliably stick, and the app then shows a
+        // Dock tile it has no use for.
+        NSApp.setActivationPolicy(.accessory)
         store = TargetStore(config: config)
         do {
             bridge = try BridgeServer()

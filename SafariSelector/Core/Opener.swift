@@ -9,26 +9,76 @@ import os.log
 final class Opener {
 
     private let bridge: BridgeServer
+    private let store: TargetStore
     private let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "opener")
 
-    init(bridge: BridgeServer) {
+    init(bridge: BridgeServer, store: TargetStore) {
         self.bridge = bridge
+        self.store = store
     }
 
-    /// Opens `url` in the given target's window, landing in whatever tab group that
-    /// window is currently showing.
+    /// Opens `url` in the target's window, landing in whatever tab group that window
+    /// is currently showing. Wakes the target's profile first if it is cold.
     func open(_ url: URL, in target: SafariTarget) async {
-        let command = Bridge.Command.open(windowId: target.windowId, url: url.absoluteString)
-        let result = await bridge.send(command, to: target.profileUUID)
+        DebugLog.write("open \(url.absoluteString) into \(target.displayLabel) warm=\(target.isWarm)")
+        guard let warm = await resolve(target) else {
+            log.error("could not resolve target for \(url.absoluteString, privacy: .public)")
+            openInSafariDirectly(url)
+            return
+        }
+        let command = Bridge.Command.open(windowId: warm.windowId, url: url.absoluteString)
+        DebugLog.write("sending OPEN windowId=\(warm.windowId) profile=\(warm.profileUUID)")
+        let result = await bridge.send(command, to: warm.profileUUID)
+        DebugLog.write("OPEN result: ok=\(result?.ok ?? false) err=\(result?.error ?? "-")")
         guard let result, result.ok else {
-            log.error("open failed for \(url.absoluteString, privacy: .public): \(result?.error ?? "no response", privacy: .public)")
+            log.error("open failed: \(result?.error ?? "no response", privacy: .public)")
             openInSafariDirectly(url)
             return
         }
         activateSafari()
     }
 
-    func openInNewWindow(_ url: URL, profileUUID: String) async {
+    /// Turns a possibly-cold target into live extension coordinates.
+    ///
+    /// Safari only runs an extension's background worker in profiles it considers
+    /// active, so a window in a dormant profile has no window id we can open into.
+    /// Focusing that window fires `windows.onFocusChanged` inside its profile, which
+    /// starts the worker; it then connects and reports its windows, and the window we
+    /// want appears — matched by the active tab URL it was already keyed on.
+    private func resolve(_ target: SafariTarget) async -> (profileUUID: String, windowId: Int)? {
+        if let p = target.profileUUID, let w = target.windowId { return (p, w) }
+        guard let scriptID = target.appleScriptWindowID else { return nil }
+
+        DebugLog.write("waking cold profile by focusing AppleScript window \(scriptID)")
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            AppleScriptProbe.queue.async {
+                AppleScriptProbe.focus(windowID: scriptID)
+                c.resume()
+            }
+        }
+
+        // Re-derive both views on each attempt and match on the AppleScript window
+        // id, which is stable. Matching on the active tab URL instead would race:
+        // the URL recorded when the picker was built can be stale by the time the
+        // woken profile reports in.
+        for attempt in 0..<40 {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                store.rebuild { c.resume() }
+            }
+            if let t = store.targets.first(where: { $0.appleScriptWindowID == scriptID }),
+               let p = t.profileUUID, let w = t.windowId {
+                DebugLog.write("woke after \(attempt) attempts: profile=\(p) windowId=\(w)")
+                return (p, w)
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        DebugLog.write("profile did not wake for AppleScript window \(scriptID)")
+        log.warning("profile did not wake for window \(scriptID)")
+        return nil
+    }
+
+    func openInNewWindow(_ url: URL, profileUUID: String?) async {
+        guard let profileUUID else { openInSafariDirectly(url); return }
         let result = await bridge.send(.openNewWindow(url: url.absoluteString), to: profileUUID)
         guard let result, result.ok else { openInSafariDirectly(url); return }
         activateSafari()

@@ -29,14 +29,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bridge.onSnapshot = { [weak self] profile, windows in
             self?.store.update(profileUUID: profile, windows: windows)
         }
+        bridge.statusProvider = { [weak self] connected in
+            guard let self else { return Data("[]".utf8) }
+            // Deliberately does not block on a rebuild: this runs on the bridge
+            // queue, and the AppleScript pass belongs on its own queue.
+            self.store.rebuild()
+            let rows = self.store.targets.map {
+                [
+                    "profileUUID": $0.profileUUID,
+                    "profileLabel": $0.profileLabel,
+                    "windowId": $0.windowId,
+                    "tabGroupLabel": $0.tabGroupLabel ?? "(loose tabs)",
+                    "activeTabTitle": $0.activeTabTitle,
+                    "tabCount": $0.tabCount,
+                    "focused": $0.isFocused,
+                ] as [String: Any]
+            }
+            let payload: [String: Any] = [
+                "connectedProfiles": connected,
+                "rawWindowCounts": self.store.rawCounts,
+                "targets": rows,
+            ]
+            return (try? JSONSerialization.data(withJSONObject: payload,
+                                                options: [.prettyPrinted, .sortedKeys])) ?? Data("[]".utf8)
+        }
         bridge.start()
-        opener = Opener(bridge: bridge)
+        opener = Opener(bridge: bridge, store: store)
         setUpStatusItem()
     }
 
     // MARK: - URL entry point
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        DebugLog.write("open urls: \(urls.map(\.absoluteString))")
         let webURLs = urls.filter { ($0.scheme == "http" || $0.scheme == "https") }
         // Anything else LaunchServices hands us is not ours to mediate.
         for other in urls where !webURLs.contains(other) {
@@ -51,7 +76,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Shift bypasses the picker and reuses the last target; Option forces it.
         if !modifiers.contains(.option) {
+            if let rule = config.rule(for: url) {
+                DebugLog.write("rule matched: pattern=\(rule.pattern) group=\(rule.tabGroupLabel ?? "-")")
+            }
             if let rule = config.rule(for: url), let target = resolve(rule) {
+                DebugLog.write("rule -> target \(target.displayLabel) warm=\(target.isWarm) asID=\(target.appleScriptWindowID ?? -1)")
                 open(batch, in: target, remember: false)
                 return
             }
@@ -62,15 +91,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
         }
+        DebugLog.write("no rule/memory match; showing picker (targets=\(store.targets.count))")
         showPicker(for: url, batch: batch)
     }
 
     /// A rule names a tab group, not a window id, so that it survives window churn.
+    ///
+    /// Prefers a warm target, but will happily return a cold one: a cold target still
+    /// carries the AppleScript window id, and the opener knows how to wake its profile.
+    /// Requiring warmth here would make rules silently stop working for any profile
+    /// Safari had let go dormant.
     private func resolve(_ rule: Config.Rule) -> SafariTarget? {
-        store.targets.first {
-            $0.profileUUID == rule.profileUUID
-                && (rule.tabGroupLabel == nil || $0.tabGroupLabel == rule.tabGroupLabel)
+        func matches(_ t: SafariTarget) -> Bool {
+            guard let group = rule.tabGroupLabel else { return t.profileUUID == rule.profileUUID }
+            return t.tabGroupLabel == group
+                && (t.profileUUID == nil || t.profileUUID == rule.profileUUID)
         }
+        let candidates = store.targets.filter(matches)
+        return candidates.first(where: \.isWarm) ?? candidates.first
     }
 
     private func open(_ urls: [URL], in target: SafariTarget, remember: Bool) {
@@ -85,9 +123,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Picker
 
     private func showPicker(for url: URL, batch: [URL]) {
-        // Labels come from AppleScript, which changes independently of the bridge.
-        store.rebuild()
+        // Labels come from AppleScript, which changes independently of the bridge,
+        // so refresh them before showing the list rather than after.
+        store.rebuild { [weak self] in
+            self?.presentPicker(for: url, batch: batch)
+        }
+    }
 
+    private func presentPicker(for url: URL, batch: [URL]) {
         panel?.dismiss()
         let targets = store.targets
         var created: SelectorPanel?

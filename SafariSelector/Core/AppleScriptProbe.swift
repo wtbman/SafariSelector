@@ -1,62 +1,90 @@
 import Foundation
 import os.log
 
-/// Supplies the one thing the WebExtension API cannot: human-readable tab group names.
+/// Safari's AppleScript view of its windows.
 ///
-/// Safari's scripting dictionary has no tab group class either, but a window's `name`
-/// is rendered as "TabGroupName — PageTitle" when the window is showing a tab group,
-/// and "ProfileName — PageTitle" when it is showing loose tabs. That prefix is the
-/// only place the tab group's name is exposed anywhere.
+/// Two things only AppleScript can do, and both are essential:
+///   1. Name the tab group a window is showing. Safari's scripting dictionary has no
+///      tab group class, but a window's `name` renders as "TabGroupName — PageTitle"
+///      (or "ProfileName — PageTitle" for a window showing loose tabs). That prefix is
+///      the only place a tab group's name is exposed anywhere.
+///   2. See *every* window across *every* profile. An extension instance only ever
+///      sees its own profile's windows, and only while that profile is awake.
 enum AppleScriptProbe {
 
-    struct WindowName {
-        let prefix: String?      // tab group name, or profile name for a loose-tab window
+    struct Window {
+        let appleScriptID: Int
+        /// Tab group name, or the profile name for a loose-tab window.
+        let prefix: String?
         let activeTabURL: String
+        let activeTabTitle: String
         let tabCount: Int
     }
 
     private static let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "applescript")
 
+    /// NSAppleScript is not thread-safe, and a query against Safari can be slow when
+    /// windows hold hundreds of tabs, so every call is funnelled through one
+    /// dedicated serial queue — never the main queue, and never a Network queue.
+    static let queue = DispatchQueue(label: "cc.wtb.SafariSelector.applescript")
+
     /// U+2014 EM DASH, the separator Safari uses between prefix and page title.
     private static let separator = " — "
 
-    private static let script = """
+    private static let listScript = """
     tell application "Safari"
         set out to ""
         repeat with w in windows
             try
-                set out to out & (name of w) & "\\t" & (URL of current tab of w) & "\\t" & (count of tabs of w) & "\\n"
+                set out to out & (id of w as text) & "\\t" & (name of w) & "\\t" ¬
+                    & (URL of current tab of w) & "\\t" & (name of current tab of w) & "\\t" ¬
+                    & (count of tabs of w)  & "\\n"
             end try
         end repeat
         return out
     end tell
     """
 
-    /// Window names keyed by active tab URL. That URL is the correlation key against
-    /// the extension's view: both sides see the same active tab, and it is far more
-    /// discriminating than window geometry or index.
-    static func windowNamesByActiveURL() -> [String: WindowName] {
-        var error: NSDictionary?
-        guard let apple = NSAppleScript(source: script) else { return [:] }
-        let output = apple.executeAndReturnError(&error)
-        if let error {
-            log.warning("AppleScript failed: \(String(describing: error), privacy: .public)")
-            return [:]
-        }
-        var result: [String: WindowName] = [:]
-        for line in (output.stringValue ?? "").split(separator: "\n") {
-            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
-            guard fields.count >= 3 else { continue }
-            let name = String(fields[0])
-            let url = String(fields[1])
-            let count = Int(fields[2]) ?? 0
+    static func windows() -> [Window] {
+        guard let output = run(listScript) else { return [] }
+        var result: [Window] = []
+        for line in output.split(separator: "\n") {
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard f.count >= 5, let wid = Int(f[0]) else { continue }
+            let name = String(f[1])
             let prefix = name.components(separatedBy: separator).first
-            result[url] = WindowName(
+            result.append(Window(
+                appleScriptID: wid,
                 prefix: (prefix?.isEmpty == false && prefix != name) ? prefix : nil,
-                activeTabURL: url,
-                tabCount: count
-            )
+                activeTabURL: String(f[2]),
+                activeTabTitle: String(f[3]),
+                tabCount: Int(f[4]) ?? 0
+            ))
         }
         return result
+    }
+
+    /// Brings a window to the front. This is also how a dormant profile is woken:
+    /// focusing one of its windows fires `windows.onFocusChanged` inside that
+    /// profile, which starts its extension worker.
+    static func focus(windowID: Int) {
+        let ok = run("""
+        tell application "Safari"
+            activate
+            set index of (first window whose id is \(windowID)) to 1
+        end tell
+        """)
+        DebugLog.write("focus(window \(windowID)) -> \(ok == nil ? "FAILED" : "ok")")
+    }
+
+    private static func run(_ source: String) -> String? {
+        var error: NSDictionary?
+        guard let apple = NSAppleScript(source: source) else { return nil }
+        let out = apple.executeAndReturnError(&error)
+        if let error {
+            log.warning("AppleScript failed: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+        return out.stringValue
     }
 }

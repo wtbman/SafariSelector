@@ -4,11 +4,13 @@ import os.log
 
 /// The merged, live view of every openable Safari window.
 ///
-/// Two sources, neither sufficient alone:
-///   - each profile's extension instance supplies window ids (the only thing that can
-///     be opened into) and real profile identity;
-///   - AppleScript supplies tab group names, which the extension cannot see.
-/// They are joined on the active tab's URL.
+/// AppleScript is the spine: it sees every window in every profile, and is the only
+/// source of tab group names. Each awake profile's extension instance then supplies
+/// the two things AppleScript cannot — the profile's identity and the WebExtension
+/// window id that `tabs.create` needs. The two views are joined on the active tab URL.
+///
+/// Windows whose profile is dormant still appear, as *cold* targets. They become warm
+/// when that profile is woken.
 final class TargetStore: ObservableObject {
 
     @Published private(set) var targets: [SafariTarget] = []
@@ -29,46 +31,75 @@ final class TargetStore: ObservableObject {
         rebuild()
     }
 
-    func forget(profileUUID: String) {
-        lock.lock()
-        byProfile.removeValue(forKey: profileUUID)
-        lock.unlock()
-        rebuild()
+    /// Raw per-profile window counts, before merging. Diagnostic only.
+    var rawCounts: [String: Int] {
+        lock.lock(); defer { lock.unlock() }
+        return byProfile.mapValues(\.count)
     }
 
-    /// Recomputes the target list, re-reading AppleScript labels.
-    func rebuild() {
-        let names = AppleScriptProbe.windowNamesByActiveURL()
+    /// Looks up the live extension coordinates for a window, by its active tab URL.
+    /// Used after waking a cold profile.
+    func warmCoordinates(forActiveURL url: String) -> (profileUUID: String, windowId: Int)? {
+        lock.lock(); defer { lock.unlock() }
+        for (profile, windows) in byProfile {
+            if let w = windows.first(where: { $0.activeTabUrl == url }) {
+                return (profile, w.windowId)
+            }
+        }
+        return nil
+    }
+
+    /// Recomputes the target list. Always runs the AppleScript on its own queue;
+    /// `completion` fires on the main queue.
+    func rebuild(completion: (() -> Void)? = nil) {
+        AppleScriptProbe.queue.async { [weak self] in
+            self?.rebuildNow()
+            if let completion { DispatchQueue.main.async(execute: completion) }
+        }
+    }
+
+    private func rebuildNow() {
+        let scriptWindows = AppleScriptProbe.windows()
 
         lock.lock()
         let snapshot = byProfile
         lock.unlock()
 
-        var out: [SafariTarget] = []
-        for (profileUUID, windows) in snapshot {
-            // A window showing loose tabs is titled with the *profile* name, so a
-            // prefix equal to this profile's own label is not a tab group.
-            let profileLabel = config.profileLabel(for: profileUUID)
-                ?? inferProfileLabel(windows: windows, names: names)
-                ?? String(profileUUID.prefix(8))
-
+        // Active tab URL -> which profile/window the extension calls it.
+        var warmByURL: [String: (profile: String, windowId: Int, focused: Bool)] = [:]
+        for (profile, windows) in snapshot {
             for w in windows {
-                let matched = names[w.activeTabUrl]
-                var groupLabel = matched?.prefix
-                if let g = groupLabel, g.caseInsensitiveCompare(profileLabel) == .orderedSame {
-                    groupLabel = nil          // loose-tab window, not a tab group
-                }
-                out.append(SafariTarget(
-                    profileUUID: profileUUID,
-                    windowId: w.windowId,
-                    profileLabel: profileLabel,
-                    tabGroupLabel: groupLabel,
-                    activeTabTitle: w.activeTabTitle,
-                    activeTabURL: w.activeTabUrl,
-                    tabCount: w.tabCount,
-                    isFocused: w.focused
-                ))
+                warmByURL[w.activeTabUrl] = (profile, w.windowId, w.focused)
             }
+        }
+
+        // A profile's own name appears as the title prefix of its loose-tab windows,
+        // so a prefix equal to the profile's label is not a tab group.
+        var labelForProfile: [String: String] = [:]
+        for profile in snapshot.keys {
+            labelForProfile[profile] = config.profileLabel(for: profile)
+                ?? String(profile.prefix(8))
+        }
+
+        var out: [SafariTarget] = []
+        for w in scriptWindows {
+            let warm = warmByURL[w.activeTabURL]
+            let profileLabel = warm.map { labelForProfile[$0.profile] ?? $0.profile } ?? "Other profiles"
+            var groupLabel = w.prefix
+            if let g = groupLabel, g.caseInsensitiveCompare(profileLabel) == .orderedSame {
+                groupLabel = nil   // loose-tab window, not a tab group
+            }
+            out.append(SafariTarget(
+                appleScriptWindowID: w.appleScriptID,
+                profileUUID: warm?.profile,
+                windowId: warm?.windowId,
+                profileLabel: profileLabel,
+                tabGroupLabel: groupLabel,
+                activeTabTitle: w.activeTabTitle,
+                activeTabURL: w.activeTabURL,
+                tabCount: w.tabCount,
+                isFocused: warm?.focused ?? false
+            ))
         }
 
         out.sort {
@@ -78,17 +109,5 @@ final class TargetStore: ObservableObject {
         }
 
         DispatchQueue.main.async { self.targets = out }
-    }
-
-    /// A profile's own name shows up as the title prefix of any loose-tab window it
-    /// owns. Without a user-supplied alias, the most frequent prefix across a
-    /// profile's windows is the best available guess.
-    private func inferProfileLabel(windows: [Bridge.WindowInfo],
-                                   names: [String: AppleScriptProbe.WindowName]) -> String? {
-        var counts: [String: Int] = [:]
-        for w in windows {
-            if let p = names[w.activeTabUrl]?.prefix { counts[p, default: 0] += 1 }
-        }
-        return counts.count == 1 ? counts.keys.first : nil
     }
 }

@@ -24,12 +24,23 @@ final class BridgeServer {
     /// Shared secret handed to instances via the native discovery handler.
     let token: String
 
-    /// Connections parked on /poll, keyed by profile UUID.
+    /// Connections parked on /poll, keyed by profile UUID. A profile is only
+    /// present here while a poll is actually in flight — there is always a gap
+    /// between one poll returning and the next arriving, which is why commands are
+    /// queued rather than requiring a live waiter.
     private var waiters: [String: (Bridge.Command) -> Void] = [:]
+    /// Commands waiting for their profile's next poll.
+    private var queued: [String: [Bridge.Command]] = [:]
+    /// Every profile that has ever polled or pushed, whether or not it is mid-poll.
+    private(set) var knownProfiles: Set<String> = []
     /// Callbacks awaiting a command result, keyed by command id.
     private var pending: [String: (Bridge.CommandResult) -> Void] = [:]
 
     var onSnapshot: ((String, [Bridge.WindowInfo]) -> Void)?
+    /// Supplies the merged target list for the status endpoint. Receives the
+    /// connected profile list as an argument: it is invoked while already on the
+    /// bridge queue, so it must never call back into a queue-synchronised property.
+    var statusProvider: (([String]) -> Data)?
 
     init() throws {
         token = BridgeServer.loadOrCreateToken()
@@ -74,11 +85,6 @@ final class BridgeServer {
               timeout: TimeInterval = 5) async -> Bridge.CommandResult? {
         await withCheckedContinuation { continuation in
             queue.async {
-                guard let waiter = self.waiters.removeValue(forKey: profileUUID) else {
-                    self.log.warning("no instance polling for profile \(profileUUID, privacy: .public)")
-                    continuation.resume(returning: nil)
-                    return
-                }
                 var settled = false
                 self.pending[command.commandId] = { result in
                     guard !settled else { return }
@@ -91,13 +97,21 @@ final class BridgeServer {
                     self.pending.removeValue(forKey: command.commandId)
                     continuation.resume(returning: nil)
                 }
-                waiter(command)
+                // Hand it to a parked poll if there is one, otherwise queue it for
+                // the next poll. A profile between polls is not a dead profile.
+                if let waiter = self.waiters.removeValue(forKey: profileUUID) {
+                    waiter(command)
+                } else {
+                    self.queued[profileUUID, default: []].append(command)
+                }
             }
         }
     }
 
+    /// Profiles that have made contact. Deliberately not "profiles currently parked
+    /// on a poll" — that set flickers empty between polls.
     var connectedProfiles: [String] {
-        queue.sync { Array(waiters.keys) }
+        queue.sync { Array(knownProfiles) }
     }
 
     // MARK: - Connection handling
@@ -144,6 +158,7 @@ final class BridgeServer {
         case ("POST", "/snapshot"):
             guard let snap = try? JSONDecoder().decode(Bridge.Snapshot.self, from: body),
                   authorised(snap.token) else { respond(conn, status: 403, json: nil); return }
+            knownProfiles.insert(snap.profileUUID)
             onSnapshot?(snap.profileUUID, snap.windows)
             respond(conn, status: 200, json: ["ok": true])
 
@@ -159,6 +174,11 @@ final class BridgeServer {
             if let cb = pending.removeValue(forKey: env.commandId) { cb(env.result) }
             respond(conn, status: 200, json: ["ok": true])
 
+        case ("GET", "/status"):
+            // Read-only introspection: what the app currently believes is openable.
+            let body = statusProvider?(Array(knownProfiles)) ?? Data("[]".utf8)
+            write(conn, status: 200, body: body)
+
         default:
             respond(conn, status: 404, json: nil)
         }
@@ -168,6 +188,14 @@ final class BridgeServer {
     /// poll ages out. Replacing an existing waiter is deliberate — a profile only
     /// ever has one live instance, and a stale parked connection must not win.
     private func park(_ conn: NWConnection, profile: String) {
+        knownProfiles.insert(profile)
+        // Anything queued while this profile was between polls goes out immediately.
+        if var pendingForProfile = queued[profile], !pendingForProfile.isEmpty {
+            let next = pendingForProfile.removeFirst()
+            queued[profile] = pendingForProfile
+            respond(conn, status: 200, jsonEncodable: next)
+            return
+        }
         waiters[profile]?(Bridge.Command.idle)
         var answered = false
         let reply: (Bridge.Command) -> Void = { [weak self] cmd in

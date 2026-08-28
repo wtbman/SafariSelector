@@ -7,13 +7,16 @@ import SwiftUI
 /// so it must accept typing, which a `.nonactivatingPanel` would not.
 final class SelectorPanel: NSPanel {
 
+    /// Called when the panel loses key status — the user clicked away.
     private var onDismiss: (() -> Void)?
 
     init<Content: View>(content: Content, onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
-            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
+            // Not .nonactivatingPanel: this panel is keyboard-driven and must take
+            // key status to receive typing.
+            styleMask: [.titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -30,6 +33,9 @@ final class SelectorPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let hosting = NSHostingView(rootView: content)
+        // Let the hosting view drive the window's size, so the panel tracks its
+        // content instead of being frozen at whatever it measured on the first pass.
+        hosting.sizingOptions = [.standardBounds]
         contentView = hosting
         setContentSize(hosting.fittingSize)
     }
@@ -50,6 +56,7 @@ final class SelectorPanel: NSPanel {
         }
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
+        makeFirstResponder(contentView)
     }
 
     override func resignKey() {

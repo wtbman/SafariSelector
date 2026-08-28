@@ -49,6 +49,12 @@ struct SafariTarget: Identifiable, Hashable {
 
     var displayLabel: String { tabGroupLabel ?? "Loose tabs" }
 
+    /// Unique per window, unlike `id`, which is deliberately per *destination* so
+    /// that rules and memory survive. Two windows in one profile can carry the same
+    /// label — a tab group named after its profile, alongside that profile's
+    /// loose-tab window — so lists must key on this instead.
+    var rowKey: String { "\(id)#\(appleScriptWindowID ?? -1)" }
+
     /// What the auto-select pattern is matched against.
     var matchHaystack: String {
         "\(profileLabel) — \(tabGroupLabel ?? "loose tabs")"

@@ -102,12 +102,16 @@ final class TargetStore: ObservableObject {
                 config.profileLabel(for: uuid) ?? String(uuid.prefix(8))
             } ?? "Unknown profile"
 
-            // A window showing loose tabs is titled with the profile's own name, so
-            // a prefix equal to the profile label is not a tab group.
-            var groupLabel = w.prefix
-            if let g = groupLabel, g.caseInsensitiveCompare(profileLabel) == .orderedSame {
-                groupLabel = nil
-            }
+            // Show the window's title prefix as its label, whatever it says.
+            //
+            // Previously a prefix equal to the profile's name was treated as "loose
+            // tabs", on the theory that Safari titles a loose-tab window with the
+            // profile name. That breaks when a tab group is *named after its profile*
+            // — a real case here — and mislabelled a genuine "Work" tab group
+            // as loose tabs, which then matched the wrong auto-select pattern. The
+            // two are genuinely indistinguishable from the title alone, and showing
+            // the name is more useful than guessing wrong.
+            let groupLabel = w.prefix
 
             out.append(SafariTarget(
                 appleScriptWindowID: w.appleScriptID,

@@ -170,3 +170,31 @@ Mitigations, all three applied:
 Related trap: `NSAppleScript.executeAndReturnError` returns a descriptor whose `stringValue` is
 `nil` for a script with no result. Treating that as failure made a working `focus` call look
 broken. Return `""` on success and reserve `nil` for a real error.
+
+## A tab group can share its profile's name
+
+Safari titles a window `TabGroupName — PageTitle` when a tab group is active and
+`ProfileName — PageTitle` when it is showing loose tabs. It is tempting to infer "this window is
+showing loose tabs" from *prefix == profile name* — and wrong. A tab group named after its own
+profile (`Work` inside the `Work` profile) is a real configuration, and that
+inference relabels it as loose tabs, which then matches the wrong auto-select pattern and sends
+links to the wrong window.
+
+The two cases are indistinguishable from the window title alone. The app therefore shows whatever
+the prefix says and does not guess. A consequence: two windows in one profile can carry the same
+label, so lists must key on `SafariTarget.rowKey` (per window) rather than `id` (per destination).
+
+## Restarting the app leaves most profiles dormant
+
+Killing and relaunching SafariSelector drops every extension connection. Safari does not restart a
+profile's background worker just because something reconnected — MV3 workers start on browser
+events — so typically only the frontmost profile comes back on its own, and `rawWindowCounts`
+shows a single entry.
+
+This is not a fault to fix at startup: the wake-on-demand path handles it at the moment it matters
+(observed waking a cold profile in one attempt, ~700ms). But it does mean **after reinstalling the
+app, most targets will read `cold` until they are used**, which looks alarming and is not.
+
+If waking genuinely fails — `profile did not wake for AppleScript window N` — the extension is not
+running in that profile at all. Check *Develop → Allow Unsigned Extensions* and that the extension
+is enabled; toggling it off and on restores it.

@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var opener: Opener!
     private var panel: SelectorPanel?
     private var pendingSource: LinkSource.Info?
+    /// Whether the user has interacted with the current picker. Clicking away after
+    /// interacting is a dismissal, not an unattended timeout.
+    private var pickerWasTouched = false
     private var statusItem: NSStatusItem?
 
     /// This app is the system's default browser. It must never route to itself.
@@ -141,38 +144,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func presentPicker(for url: URL, batch: [URL]) {
         panel?.dismiss()
         let targets = store.targets
+        let autoTarget = config.stored.autoSelectSeconds > 0
+            ? config.autoSelectTarget(from: targets) : nil
+
+        // A link must be acted on exactly once. The countdown, a click, a keypress
+        // and clicking away can all race, so every route funnels through here.
+        var settled = false
         var created: SelectorPanel?
+        let settle: (@escaping () -> Void) -> Void = { action in
+            guard !settled else { return }
+            settled = true
+            created?.dismiss()
+            self.panel = nil
+            action()
+        }
 
         let view = SelectorView(
             url: url,
             targets: targets,
             source: pendingSource,
             autoSelectSeconds: config.stored.autoSelectSeconds,
-            autoTarget: config.stored.autoSelectSeconds > 0
-                ? config.autoSelectTarget(from: targets) : nil,
-            onChoose: { [weak self] target in
-                created?.dismiss(); self?.panel = nil
-                self?.open(batch, in: target, remember: true)
+            autoTarget: autoTarget,
+            onChoose: { target in
+                settle { self.open(batch, in: target, remember: true) }
             },
-            onNewWindow: { [weak self] target in
-                created?.dismiss(); self?.panel = nil
-                Task { await self?.opener.openInNewWindow(url, profileUUID: target.profileUUID) }
+            onNewWindow: { target in
+                settle {
+                    Task { await self.opener.openInNewWindow(url, profileUUID: target.profileUUID) }
+                }
             },
-            onFallback: { [weak self] in
-                created?.dismiss(); self?.panel = nil
-                batch.forEach { self?.opener.openInSafariDirectly($0) }
+            onFallback: {
+                settle { batch.forEach { self.opener.openInSafariDirectly($0) } }
             },
-            onCancel: { [weak self] in
-                created?.dismiss(); self?.panel = nil
+            onCancel: {
+                // Escape is an explicit "not now"; the link is deliberately dropped.
+                settle { DebugLog.write("cancelled by user") }
+            },
+            onInteraction: { [weak self] in
+                // Once the user has touched the picker, clicking away is no longer an
+                // unattended dismissal, so it must not auto-open anything.
+                self?.pickerWasTouched = true
             }
         )
 
         let p = SelectorPanel(content: view) { [weak self] in
-            self?.panel?.dismiss()
-            self?.panel = nil
+            guard let self else { return }
+            // Clicked away without choosing. If an auto-select target is configured,
+            // act on it immediately rather than making the user wait out a countdown
+            // they can no longer see.
+            if let autoTarget, !self.pickerWasTouched {
+                DebugLog.write("clicked away; auto-selecting \(autoTarget.displayLabel)")
+                settle { self.open(batch, in: autoTarget, remember: false) }
+            } else {
+                // No default configured: hand the link to Safari rather than drop it.
+                DebugLog.write("clicked away with no auto-select target; opening in Safari")
+                settle { batch.forEach { self.opener.openInSafariDirectly($0) } }
+            }
         }
         created = p
         panel = p
+        pickerWasTouched = false
         p.showCentredOnPointerScreen()
     }
 

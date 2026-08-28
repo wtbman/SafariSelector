@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import AppKit
 
 /// The picker. Keyboard-first: type to filter, arrows to move, digits to jump,
 /// Return to open, Escape to cancel.
@@ -15,20 +16,45 @@ struct SelectorView: View {
     let onNewWindow: (SafariTarget) -> Void
     let onFallback: () -> Void
     let onCancel: () -> Void
+    /// Called when the countdown is cancelled by the user touching anything, so the
+    /// panel can stop treating this as an unattended pick.
+    let onInteraction: () -> Void
 
     @State private var filter = ""
     @State private var selection = 0
-    @State private var remaining: Int = 0
+    @State private var remaining = 0
     @State private var countdownCancelled = false
-    @FocusState private var focused: Bool
+    /// Command-A selects the whole filter, so the next keystroke replaces it and
+    /// backspace clears it — the text-field behaviour people expect, without a
+    /// text field (which would swallow the number keys).
+    @State private var filterSelected = false
+    @State private var monitor: Any?
+    /// The view must be focusable *and* focused for onKeyPress to fire at all;
+    /// without it every keystroke goes unhandled and macOS beeps.
+    @FocusState private var isFocused: Bool
 
-    // Type scale. Sized for a 4K display, where the defaults are unreadably small.
-    private let urlSize: CGFloat = 22       // 200% of the original 11
-    private let titleSize: CGFloat = 17.5   // 135% of the original 13
-    private let subtitleSize: CGFloat = 15  // 135% of the original 11
-    private let digitSize: CGFloat = 25     // 250% of the original 10
+    // Type scale, sized for a 4K display where the defaults are unreadably small.
+    private let urlSize: CGFloat = 15.5
+    private let sourceIconSize: CGFloat = 36
+    private let sourceTextSize: CGFloat = 26
+    private let titleSize: CGFloat = 17.5
+    private let subtitleSize: CGFloat = 15
+    private let digitSize: CGFloat = 25
 
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    // Layout metrics. The list is sized from the *unfiltered* target count so the
+    // panel's height never changes while typing: the window is sized once when it
+    // opens, and a list that shrank while filtering would not grow back.
+    private let rowHeight: CGFloat = 52
+    private let groupHeaderHeight: CGFloat = 30
+    private let maxListHeight: CGFloat = 440
+
+    private var listHeight: CGFloat {
+        let groups = Set(targets.map(\.profileLabel)).count
+        let natural = CGFloat(targets.count) * rowHeight + CGFloat(groups) * groupHeaderHeight
+        return min(max(natural, rowHeight), maxListHeight)
+    }
 
     private var filtered: [SafariTarget] {
         guard !filter.isEmpty else { return targets }
@@ -42,20 +68,43 @@ struct SelectorView: View {
             .sorted { $0.profile < $1.profile }
     }
 
+    /// Flattened in the same order the grouped list renders, so index-based
+    /// selection and the visible order never disagree.
+    private var flat: [SafariTarget] { grouped.flatMap(\.items) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            if filtered.isEmpty { empty } else { list }
+            Group {
+                if filtered.isEmpty { empty } else { list }
+            }
+            .frame(height: listHeight, alignment: .top)
             Divider()
             footer
         }
-        .frame(width: 680)
+        .frame(width: 1020)
         .background(.regularMaterial)
-        .onKeyPress(action: onKey)
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
+        .onKeyPress(phases: .down) { press in handle(press) }
         .onAppear {
-            focused = true
+            // Focus has to be claimed after the panel has actually become key.
+            DispatchQueue.main.async { isFocused = true }
             remaining = autoTarget == nil ? 0 : autoSelectSeconds
+            // Scrolling and clicking are interaction too, and neither reaches
+            // onKeyPress. A local monitor is the only thing that sees all of them.
+            monitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.scrollWheel, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { event in
+                cancelCountdown()
+                return event
+            }
+        }
+        .onDisappear {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
         }
         .onReceive(tick) { _ in
             guard !countdownCancelled, remaining > 0, let autoTarget else { return }
@@ -64,47 +113,56 @@ struct SelectorView: View {
         }
     }
 
+    private func cancelCountdown() {
+        guard !countdownCancelled else { return }
+        countdownCancelled = true
+        onInteraction()
+    }
+
+    // MARK: - Header
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             if let source {
-                HStack(spacing: 6) {
+                HStack(spacing: 10) {
                     if let icon = source.icon {
-                        Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: sourceIconSize, height: sourceIconSize)
                     }
                     Text("from \(source.name)")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: sourceTextSize, weight: .semibold))
                 }
             }
             Text(url.absoluteString)
                 .font(.system(size: urlSize, design: .monospaced))
                 .lineLimit(2)
                 .truncationMode(.middle)
-                .foregroundStyle(.primary)
-            TextField("Filter windows…", text: $filter)
-                .textFieldStyle(.plain)
+                .foregroundStyle(.secondary)
+            Text(filter.isEmpty ? "Type to filter windows…" : filter)
                 .font(.system(size: 18))
-                .focused($focused)
-                .onChange(of: filter) { selection = 0; countdownCancelled = true }
-                .onSubmit { choose() }
+                .foregroundStyle(filter.isEmpty
+                                 ? AnyShapeStyle(.tertiary)
+                                 : AnyShapeStyle(filterSelected ? Color.white : Color.primary))
+                .padding(.horizontal, filterSelected ? 4 : 0)
+                .background(filterSelected ? Color.accentColor : .clear)
         }
-        .padding(12)
+        .padding(14)
     }
 
     private var empty: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(targets.isEmpty ? "No Safari windows connected" : "No matches")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: titleSize, weight: .medium))
             if targets.isEmpty {
                 Text("Enable the SafariSelector extension in Safari Settings → Extensions.")
-                    .font(.system(size: 11))
+                    .font(.system(size: subtitleSize))
                     .foregroundStyle(.secondary)
             }
             Button("Open in Safari normally", action: onFallback)
-                .font(.system(size: 11))
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var list: some View {
@@ -116,60 +174,57 @@ struct SelectorView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 14)
-                            .padding(.top, 8)
+                            .padding(.top, 10)
                             .padding(.bottom, 2)
-                        ForEach(group.items) { target in
-                            row(target)
-                                .id(target.id)
+                        ForEach(group.items, id: \.rowKey) { target in
+                            row(target).id(target.rowKey)
                         }
                     }
                 }
             }
-            .frame(maxHeight: 440)
+            .frame(maxHeight: .infinity)
             .onChange(of: selection) {
-                if let t = flat.indices.contains(selection) ? flat[selection] : nil {
-                    proxy.scrollTo(t.id)
-                }
+                if flat.indices.contains(selection) { proxy.scrollTo(flat[selection].rowKey) }
             }
         }
     }
 
-    /// Flattened in the same order the grouped list renders, so index-based
-    /// selection and the visible order never disagree.
-    private var flat: [SafariTarget] { grouped.flatMap(\.items) }
-
     private func row(_ target: SafariTarget) -> some View {
         let index = flat.firstIndex(of: target) ?? 0
         let isSelected = index == selection
-        return HStack(spacing: 8) {
+        return HStack(spacing: 10) {
             Image(systemName: target.tabGroupLabel == nil ? "square.on.square.dashed" : "square.stack")
-                .foregroundStyle(isSelected ? Color.white : .secondary)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
+                .foregroundStyle(isSelected ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(target.displayLabel)
                     .font(.system(size: titleSize, weight: .medium))
                 Text(target.activeTabTitle.isEmpty ? target.activeTabURL : target.activeTabTitle)
                     .font(.system(size: subtitleSize))
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.8) : .secondary)
+                    .foregroundStyle(isSelected ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
             }
             Spacer()
+            Text("\(target.tabCount)")
+                .font(.system(size: subtitleSize - 3, design: .monospaced))
+                .foregroundStyle(isSelected ? AnyShapeStyle(Color.white.opacity(0.7)) : AnyShapeStyle(.tertiary))
             if index < 9 {
                 Text("\(index + 1)")
                     .font(.system(size: digitSize, weight: .semibold, design: .rounded))
                     .foregroundStyle(isSelected ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
-                    .frame(minWidth: digitSize)
+                    .frame(minWidth: digitSize + 6, alignment: .trailing)
             }
-            Text("\(target.tabCount)")
-                .font(.system(size: subtitleSize - 3, design: .monospaced))
-                .foregroundStyle(isSelected ? AnyShapeStyle(Color.white.opacity(0.7)) : AnyShapeStyle(.tertiary))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(isSelected ? Color.accentColor : .clear)
         .foregroundStyle(isSelected ? Color.white : .primary)
         .contentShape(Rectangle())
-        .onTapGesture { countdownCancelled = true; selection = index; choose() }
+        .onTapGesture {
+            cancelCountdown()
+            selection = index
+            choose()
+        }
     }
 
     private var footer: some View {
@@ -178,19 +233,20 @@ struct SelectorView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "timer")
                     Text("\(autoTarget.displayLabel) in \(remaining)s")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                 }
                 .foregroundStyle(.orange)
-                Divider().frame(height: 12)
+                Divider().frame(height: 14)
             }
             hint("↑↓", "move")
-            hint("⌘1–9", "jump")
+            hint("1–9", "jump")
             hint("⏎", "open")
             hint("⌘⏎", "new window")
-            hint("esc", "cancel")
+            hint("⌫", "delete")
+            hint("esc", "clear / cancel")
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.vertical, 10)
     }
 
     private func hint(_ key: String, _ label: String) -> some View {
@@ -202,37 +258,84 @@ struct SelectorView: View {
 
     // MARK: - Key handling
 
-    /// One handler for everything. Arrow keys and Escape never reach the text field
-    /// as text, and jumps are bound to Command-digit so plain digits stay typable
-    /// into the filter.
-    private func onKey(_ press: KeyPress) -> KeyPress.Result {
-        // Any deliberate keystroke means the user is choosing; stop the clock.
-        countdownCancelled = true
+    /// One handler for every key.
+    ///
+    /// The filter is driven from here rather than by a focused `TextField`, because a
+    /// focused text field swallows digits — so pressing "3" typed a 3 instead of
+    /// jumping to the third window, which is the whole point of numbering the rows.
+    private func handle(_ press: KeyPress) -> KeyPress.Result {
+        cancelCountdown()
+
         if press.modifiers.contains(.command) {
             if press.key == .return {
                 if flat.indices.contains(selection) { onNewWindow(flat[selection]) }
                 return .handled
             }
-            if let n = Int(press.characters), (1...9).contains(n) {
-                guard flat.indices.contains(n - 1) else { return .handled }
-                selection = n - 1
-                choose()
+            if press.characters.lowercased() == "a" {
+                filterSelected = !filter.isEmpty
                 return .handled
             }
             return .ignored
         }
+
+        // Backspace does not reliably arrive as KeyEquivalent.delete, so match the
+        // control characters too rather than trusting one representation.
+        let isDelete = press.key == .delete || press.key == .deleteForward
+            || press.characters == "\u{7F}" || press.characters == "\u{8}"
+        if isDelete {
+            if filterSelected || press.modifiers.contains(.command) {
+                filter = ""
+            } else if press.modifiers.contains(.option) {
+                // Delete the last word.
+                var parts = filter.split(separator: " ", omittingEmptySubsequences: false)
+                if !parts.isEmpty { parts.removeLast() }
+                filter = parts.joined(separator: " ")
+            } else if !filter.isEmpty {
+                filter.removeLast()
+            }
+            filterSelected = false
+            selection = 0
+            return .handled   // always handled, so an empty filter does not beep
+        }
+
         switch press.key {
         case .downArrow:
             selection = min(selection + 1, max(flat.count - 1, 0)); return .handled
         case .upArrow:
             selection = max(selection - 1, 0); return .handled
         case .escape:
+            if !filter.isEmpty {
+                filter = ""; filterSelected = false; selection = 0
+                return .handled
+            }
             onCancel(); return .handled
         case .return:
             choose(); return .handled
+        case .delete:
+            if !filter.isEmpty { filter.removeLast(); selection = 0 }
+            return .handled
         default:
-            return .ignored
+            break
         }
+
+        guard let ch = press.characters.first else { return .ignored }
+
+        // Digits jump. Filtering by a bare number is the rarer need by far.
+        if let n = ch.wholeNumberValue, (1...9).contains(n), press.characters.count == 1,
+           !filterSelected {
+            guard flat.indices.contains(n - 1) else { return .handled }
+            selection = n - 1
+            choose()
+            return .handled
+        }
+
+        if ch.isLetter || ch.isNumber || ch.isPunctuation || ch.isSymbol || ch == " " {
+            if filterSelected { filter = ""; filterSelected = false }
+            filter.append(press.characters)
+            selection = 0
+            return .handled
+        }
+        return .ignored
     }
 
     private func choose() {

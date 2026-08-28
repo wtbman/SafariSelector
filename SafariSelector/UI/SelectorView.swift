@@ -34,9 +34,9 @@ struct SelectorView: View {
     @FocusState private var isFocused: Bool
 
     // Type scale, sized for a 4K display where the defaults are unreadably small.
-    private let urlSize: CGFloat = 15.5
-    private let sourceIconSize: CGFloat = 36
-    private let sourceTextSize: CGFloat = 26
+    private let urlSize: CGFloat = 18      // +15%
+    private let sourceIconSize: CGFloat = 31   // -15%
+    private let sourceTextSize: CGFloat = 22   // -15%
     private let titleSize: CGFloat = 17.5
     private let subtitleSize: CGFloat = 15
     private let digitSize: CGFloat = 25
@@ -46,13 +46,19 @@ struct SelectorView: View {
     // Layout metrics. The list is sized from the *unfiltered* target count so the
     // panel's height never changes while typing: the window is sized once when it
     // opens, and a list that shrank while filtering would not grow back.
-    private let rowHeight: CGFloat = 52
+    //
+    // Rows and headers are pinned to these heights rather than measured, so the
+    // arithmetic below is exact by construction. Estimating them was off by ~8pt a
+    // row, which quietly clipped the last window off the bottom of a short list.
+    private let rowHeight: CGFloat = 60
     private let groupHeaderHeight: CGFloat = 30
-    private let maxListHeight: CGFloat = 440
+    private let maxListHeight: CGFloat = 792
 
     private var listHeight: CGFloat {
         let groups = Set(targets.map(\.profileLabel)).count
-        let natural = CGFloat(targets.count) * rowHeight + CGFloat(groups) * groupHeaderHeight
+        let natural = CGFloat(targets.count) * rowHeight
+            + CGFloat(groups) * groupHeaderHeight
+            + 8   // breathing room at the bottom of the list
         return min(max(natural, rowHeight), maxListHeight)
     }
 
@@ -83,8 +89,9 @@ struct SelectorView: View {
             Divider()
             footer
         }
-        .frame(width: 1020)
+        .frame(width: 867)
         .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
@@ -174,8 +181,8 @@ struct SelectorView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 14)
-                            .padding(.top, 10)
-                            .padding(.bottom, 2)
+                            .frame(height: groupHeaderHeight, alignment: .bottomLeading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         ForEach(group.items, id: \.rowKey) { target in
                             row(target).id(target.rowKey)
                         }
@@ -184,7 +191,10 @@ struct SelectorView: View {
             }
             .frame(maxHeight: .infinity)
             .onChange(of: selection) {
-                if flat.indices.contains(selection) { proxy.scrollTo(flat[selection].rowKey) }
+                // Never scroll for the first row: doing so lifts its group header out
+                // of the viewport, which reads as the profile name having vanished.
+                guard selection > 0, flat.indices.contains(selection) else { return }
+                proxy.scrollTo(flat[selection].rowKey)
             }
         }
     }
@@ -216,7 +226,7 @@ struct SelectorView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .frame(height: rowHeight)
         .background(isSelected ? Color.accentColor : .clear)
         .foregroundStyle(isSelected ? Color.white : .primary)
         .contentShape(Rectangle())

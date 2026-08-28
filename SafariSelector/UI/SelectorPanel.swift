@@ -14,19 +14,16 @@ final class SelectorPanel: NSPanel {
         self.onDismiss = onDismiss
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
-            // Not .nonactivatingPanel: this panel is keyboard-driven and must take
-            // key status to receive typing.
-            styleMask: [.titled, .fullSizeContentView],
+            // Borderless: a titled panel reserves a title bar strip even when it is
+            // transparent, which showed as a band of empty space above the content.
+            // canBecomeKey is overridden below so the picker still receives typing.
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-        titleVisibility = .hidden
-        titlebarAppearsTransparent = true
         isMovableByWindowBackground = true
-        standardWindowButton(.closeButton)?.isHidden = true
-        standardWindowButton(.miniaturizeButton)?.isHidden = true
-        standardWindowButton(.zoomButton)?.isHidden = true
         isOpaque = false
+        hasShadow = true
         backgroundColor = .clear
         level = .floating
         hidesOnDeactivate = false

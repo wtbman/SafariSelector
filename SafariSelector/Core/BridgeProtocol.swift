@@ -13,6 +13,12 @@ enum Bridge {
         let tabCount: Int
         let activeTabUrl: String
         let activeTabTitle: String
+        /// Screen geometry. This, not the active tab URL, is how a window in this
+        /// list is matched to the same window in AppleScript's list.
+        var left: Int?
+        var top: Int?
+        var width: Int?
+        var height: Int?
     }
 
     struct Snapshot: Codable {
@@ -27,9 +33,18 @@ enum Bridge {
         let type: String
         var windowId: Int?
         var url: String?
+        /// Geometry of the intended window. The extension resolves against this
+        /// first, because window ids are reassigned when its worker restarts.
+        var matchLeft: Int?
+        var matchTop: Int?
+        var matchWidth: Int?
+        var matchHeight: Int?
 
-        static func open(windowId: Int, url: String) -> Command {
-            Command(commandId: UUID().uuidString, type: "OPEN", windowId: windowId, url: url)
+        static func open(windowId: Int, url: String,
+                         match: (left: Int, top: Int, width: Int, height: Int)?) -> Command {
+            Command(commandId: UUID().uuidString, type: "OPEN", windowId: windowId, url: url,
+                    matchLeft: match?.left, matchTop: match?.top,
+                    matchWidth: match?.width, matchHeight: match?.height)
         }
         static func openNewWindow(url: String) -> Command {
             Command(commandId: UUID().uuidString, type: "OPEN_NEW_WINDOW", windowId: nil, url: url)

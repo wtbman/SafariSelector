@@ -42,12 +42,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     "tabGroupLabel": $0.tabGroupLabel ?? "(loose tabs)",
                     "activeTabTitle": $0.activeTabTitle,
                     "tabCount": $0.tabCount,
+                    "asBounds": $0.bounds.map { "\($0.left),\($0.top) \($0.width)x\($0.height)" } ?? "-",
+                    "asID": $0.appleScriptWindowID ?? -1,
                     "focused": $0.isFocused,
                 ] as [String: Any]
             }
             let payload: [String: Any] = [
                 "connectedProfiles": connected,
                 "rawWindowCounts": self.store.rawCounts,
+                "rawWindows": self.store.rawWindows,
                 "targets": rows,
             ]
             return (try? JSONSerialization.data(withJSONObject: payload,

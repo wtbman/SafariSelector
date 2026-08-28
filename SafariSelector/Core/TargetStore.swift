@@ -7,7 +7,7 @@ import os.log
 /// AppleScript is the spine: it sees every window in every profile, and is the only
 /// source of tab group names. Each awake profile's extension instance then supplies
 /// the two things AppleScript cannot — the profile's identity and the WebExtension
-/// window id that `tabs.create` needs. The two views are joined on the active tab URL.
+/// window id that `tabs.create` needs.
 ///
 /// Windows whose profile is dormant still appear, as *cold* targets. They become warm
 /// when that profile is woken.
@@ -20,6 +20,11 @@ final class TargetStore: ObservableObject {
     private let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "store")
     private let config: Config
 
+    /// How far a window's left edge and size may disagree between the two views
+    /// and still be considered the same window. These agree exactly in practice, so
+    /// this only absorbs rounding.
+    private static let shapeTolerance = 40
+
     init(config: Config) {
         self.config = config
     }
@@ -31,22 +36,35 @@ final class TargetStore: ObservableObject {
         rebuild()
     }
 
+    func forget(profileUUID: String) {
+        lock.lock()
+        byProfile.removeValue(forKey: profileUUID)
+        lock.unlock()
+        rebuild()
+    }
+
     /// Raw per-profile window counts, before merging. Diagnostic only.
     var rawCounts: [String: Int] {
         lock.lock(); defer { lock.unlock() }
         return byProfile.mapValues(\.count)
     }
 
-    /// Looks up the live extension coordinates for a window, by its active tab URL.
-    /// Used after waking a cold profile.
-    func warmCoordinates(forActiveURL url: String) -> (profileUUID: String, windowId: Int)? {
+    /// What each instance actually reported, geometry included. Diagnostic only —
+    /// missing geometry means an instance is still running an older background.js.
+    var rawWindows: [[String: Any]] {
         lock.lock(); defer { lock.unlock() }
-        for (profile, windows) in byProfile {
-            if let w = windows.first(where: { $0.activeTabUrl == url }) {
-                return (profile, w.windowId)
+        return byProfile.flatMap { profile, windows in
+            windows.map { w in
+                [
+                    "profile": String(profile.prefix(8)),
+                    "windowId": w.windowId,
+                    "geometry": (w.left != nil)
+                        ? "\(w.left!),\(w.top!) \(w.width!)x\(w.height!)"
+                        : "MISSING - extension needs reloading",
+                    "activeTabTitle": w.activeTabTitle,
+                ] as [String: Any]
             }
         }
-        return nil
     }
 
     /// Recomputes the target list. Always runs the AppleScript on its own queue;
@@ -65,51 +83,43 @@ final class TargetStore: ObservableObject {
         let snapshot = byProfile
         lock.unlock()
 
-        // Active tab URL -> which profile/window the extension calls it.
-        var warmByURL: [String: (profile: String, windowId: Int, focused: Bool)] = [:]
-        for (profile, windows) in snapshot {
-            for w in windows {
-                warmByURL[w.activeTabUrl] = (profile, w.windowId, w.focused)
-            }
-        }
+        let pairing = pairByGeometry(scriptWindows: scriptWindows, snapshot: snapshot)
 
-        // A profile's own name appears as the title prefix of its loose-tab windows,
-        // so a prefix equal to the profile's label is not a tab group.
-        var labelForProfile: [String: String] = [:]
-        for profile in snapshot.keys {
-            labelForProfile[profile] = config.profileLabel(for: profile)
-                ?? String(profile.prefix(8))
-        }
-
-        // Learn which profile owns each tab group while we can see it, so the same
+        // Learn which profile owns each tab group while it is visible, so the same
         // window is still labelled correctly later when its profile is dormant.
         for w in scriptWindows {
-            if let group = w.prefix, let warm = warmByURL[w.activeTabURL] {
-                DispatchQueue.main.async { self.config.learn(group: group, belongsTo: warm.profile) }
+            if let group = w.prefix, let matched = pairing[w.appleScriptID] {
+                let profile = matched.profile
+                DispatchQueue.main.async { self.config.learn(group: group, belongsTo: profile) }
             }
         }
 
         var out: [SafariTarget] = []
         for w in scriptWindows {
-            let warm = warmByURL[w.activeTabURL]
-            let owningProfile = warm?.profile ?? w.prefix.flatMap { config.profileOwning(group: $0) }
+            let matched = pairing[w.appleScriptID]
+            let owningProfile = matched?.profile ?? w.prefix.flatMap { config.profileOwning(group: $0) }
             let profileLabel = owningProfile.map { uuid in
-                config.profileLabel(for: uuid) ?? labelForProfile[uuid] ?? String(uuid.prefix(8))
+                config.profileLabel(for: uuid) ?? String(uuid.prefix(8))
             } ?? "Unknown profile"
+
+            // A window showing loose tabs is titled with the profile's own name, so
+            // a prefix equal to the profile label is not a tab group.
             var groupLabel = w.prefix
             if let g = groupLabel, g.caseInsensitiveCompare(profileLabel) == .orderedSame {
-                groupLabel = nil   // loose-tab window, not a tab group
+                groupLabel = nil
             }
+
             out.append(SafariTarget(
                 appleScriptWindowID: w.appleScriptID,
-                profileUUID: warm?.profile,
-                windowId: warm?.windowId,
+                profileUUID: matched?.profile,
+                windowId: matched?.info.windowId,
                 profileLabel: profileLabel,
                 tabGroupLabel: groupLabel,
                 activeTabTitle: w.activeTabTitle,
                 activeTabURL: w.activeTabURL,
                 tabCount: w.tabCount,
-                isFocused: warm?.focused ?? false
+                isFocused: matched?.info.focused ?? false,
+                bounds: w.bounds
             ))
         }
 
@@ -120,5 +130,47 @@ final class TargetStore: ObservableObject {
         }
 
         DispatchQueue.main.async { self.targets = out }
+    }
+
+    /// Pairs AppleScript windows with extension windows, one-to-one, by geometry.
+    ///
+    /// The obvious key — the active tab's URL — is wrong. Several windows routinely
+    /// show the same page (especially just after this app has opened the same link
+    /// into a few of them), and they then collapse onto a single extension window,
+    /// which sends later links to the wrong window. Geometry is genuinely unique.
+    private func pairByGeometry(
+        scriptWindows: [AppleScriptProbe.Window],
+        snapshot: [String: [Bridge.WindowInfo]]
+    ) -> [Int: (profile: String, info: Bridge.WindowInfo)] {
+
+        var candidates: [(profile: String, info: Bridge.WindowInfo)] = []
+        for (profile, windows) in snapshot {
+            for w in windows { candidates.append((profile, w)) }
+        }
+
+        // Score every pair on shape, keeping vertical distance only as a tiebreak
+        // for the rare case where two windows share a left edge and size.
+        var scored: [(shape: Int, vertical: Int, scriptID: Int, index: Int)] = []
+        for w in scriptWindows {
+            for (i, c) in candidates.enumerated() {
+                guard let l = c.info.left, let t = c.info.top,
+                      let width = c.info.width, let h = c.info.height else { continue }
+                let other = AppleScriptProbe.Bounds(left: l, top: t, width: width, height: h)
+                let shape = w.bounds.shapeDistance(to: other)
+                guard shape <= Self.shapeTolerance else { continue }
+                scored.append((shape, w.bounds.verticalDistance(to: other), w.appleScriptID, i))
+            }
+        }
+
+        // Best matches first, so one ambiguous window cannot cascade into a chain of
+        // wrong assignments. Each side is used at most once.
+        var pairing: [Int: (profile: String, info: Bridge.WindowInfo)] = [:]
+        var used = Set<Int>()
+        for pair in scored.sorted(by: { ($0.shape, $0.vertical) < ($1.shape, $1.vertical) }) {
+            guard pairing[pair.scriptID] == nil, !used.contains(pair.index) else { continue }
+            pairing[pair.scriptID] = candidates[pair.index]
+            used.insert(pair.index)
+        }
+        return pairing
     }
 }

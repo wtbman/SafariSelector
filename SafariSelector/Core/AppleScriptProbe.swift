@@ -19,6 +19,26 @@ enum AppleScriptProbe {
         let activeTabURL: String
         let activeTabTitle: String
         let tabCount: Int
+        /// Screen geometry, the correlation key against the extension's view.
+        let bounds: Bounds
+    }
+
+    /// Window position and size, top-left origin — the same convention the
+    /// WebExtension `windows` API uses for `left`/`top`/`width`/`height`.
+    struct Bounds: Hashable {
+        let left: Int, top: Int, width: Int, height: Int
+
+        /// How strongly this window's position and size disagree with another's,
+        /// ignoring vertical position. Windows are matched on left edge and size
+        /// first: those agree exactly between the two views, whereas `top` can lag
+        /// by hundreds of points when one side's snapshot predates a window move.
+        func shapeDistance(to other: Bounds) -> Int {
+            abs(left - other.left) + abs(width - other.width) + abs(height - other.height)
+        }
+
+        func verticalDistance(to other: Bounds) -> Int {
+            abs(top - other.top)
+        }
     }
 
     private static let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "applescript")
@@ -36,9 +56,12 @@ enum AppleScriptProbe {
         set out to ""
         repeat with w in windows
             try
-                set out to out & (id of w as text) & "\\t" & (name of w) & "\\t" ¬
-                    & (URL of current tab of w) & "\\t" & (name of current tab of w) & "\\t" ¬
-                    & (count of tabs of w)  & "\\n"
+                set b to bounds of w
+                set out to out & (id of w as text) & "\t" & (name of w) & "\t" ¬
+                    & (URL of current tab of w) & "\t" & (name of current tab of w) & "\t" ¬
+                    & (count of tabs of w) & "\t" ¬
+                    & (item 1 of b as text) & "," & (item 2 of b as text) & "," ¬
+                    & (item 3 of b as text) & "," & (item 4 of b as text) & "\n"
             end try
         end repeat
         return out
@@ -50,15 +73,19 @@ enum AppleScriptProbe {
         var result: [Window] = []
         for line in output.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false)
-            guard f.count >= 5, let wid = Int(f[0]) else { continue }
+            guard f.count >= 6, let wid = Int(f[0]) else { continue }
             let name = String(f[1])
             let prefix = name.components(separatedBy: separator).first
+            // AppleScript reports {left, top, right, bottom}.
+            let b = f[5].split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            guard b.count == 4 else { continue }
             result.append(Window(
                 appleScriptID: wid,
                 prefix: (prefix?.isEmpty == false && prefix != name) ? prefix : nil,
                 activeTabURL: String(f[2]),
                 activeTabTitle: String(f[3]),
-                tabCount: Int(f[4]) ?? 0
+                tabCount: Int(f[4]) ?? 0,
+                bounds: Bounds(left: b[0], top: b[1], width: b[2] - b[0], height: b[3] - b[1])
             ))
         }
         return result

@@ -26,6 +26,9 @@ struct SafariTarget: Identifiable, Hashable {
     var activeTabURL: String
     var tabCount: Int
     var isFocused: Bool
+    /// Screen geometry, sent with the open command so the extension can resolve the
+    /// window itself rather than trusting an id that may have been reassigned.
+    var bounds: AppleScriptProbe.Bounds?
 
     /// True once this target can be opened into without waking anything.
     var isWarm: Bool { profileUUID != nil && windowId != nil }

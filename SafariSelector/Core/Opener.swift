@@ -26,7 +26,11 @@ final class Opener {
             openInSafariDirectly(url)
             return
         }
-        let command = Bridge.Command.open(windowId: warm.windowId, url: url.absoluteString)
+        let match = target.bounds.map {
+            (left: $0.left, top: $0.top, width: $0.width, height: $0.height)
+        }
+        let command = Bridge.Command.open(windowId: warm.windowId, url: url.absoluteString,
+                                          match: match)
         // Focus the intended window first. This keeps the extension's fallback
         // correct if the window id has gone stale, and matches what the user just
         // picked: the tab lands in the window they are looking at.
@@ -55,7 +59,7 @@ final class Opener {
     /// active, so a window in a dormant profile has no window id we can open into.
     /// Focusing that window fires `windows.onFocusChanged` inside its profile, which
     /// starts the worker; it then connects and reports its windows, and the window we
-    /// want appears — matched by the active tab URL it was already keyed on.
+    /// want appears, paired by geometry like every other window.
     private func resolve(_ target: SafariTarget) async -> (profileUUID: String, windowId: Int)? {
         if let p = target.profileUUID, let w = target.windowId { return (p, w) }
         guard let scriptID = target.appleScriptWindowID else { return nil }
@@ -69,9 +73,7 @@ final class Opener {
         }
 
         // Re-derive both views on each attempt and match on the AppleScript window
-        // id, which is stable. Matching on the active tab URL instead would race:
-        // the URL recorded when the picker was built can be stale by the time the
-        // woken profile reports in.
+        // id, which is stable within a Safari session.
         for attempt in 0..<40 {
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
                 store.rebuild { c.resume() }

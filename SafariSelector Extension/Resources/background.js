@@ -50,6 +50,10 @@ async function snapshot() {
         tabCount: tabs.length,
         activeTabUrl: active.url || "",
         activeTabTitle: active.title || "",
+        // Geometry is the correlation key against AppleScript's view of the same
+        // windows. The active tab URL is not usable for this: several windows
+        // routinely show the same page, and they then collapse onto one entry.
+        left: w.left, top: w.top, width: w.width, height: w.height,
       };
     });
 }
@@ -74,25 +78,47 @@ function schedulePush() {
 async function execute(cmd) {
   switch (cmd.type) {
     case "OPEN": {
-      // Window ids are not durable: Safari reassigns them when this worker restarts,
-      // so an id from an earlier snapshot can name a window that no longer exists.
-      // Validate it, and fall back to the focused window — the app focuses the
-      // intended window immediately before sending this, so that is the right one.
-      let windowId = cmd.windowId;
-      try {
-        if (windowId != null) await api.windows.get(windowId);
-      } catch (e) {
-        windowId = null;
+      // Resolve the target window at execution time. Ids are not durable — Safari
+      // reassigns them when this worker restarts — so geometry, which the app
+      // captured from AppleScript's view of the same window, is the primary key.
+      let windowId = null;
+      const wins = await api.windows.getAll({ populate: false });
+
+      if (cmd.matchLeft != null) {
+        // Match on left edge and size; vertical position is only a tiebreak, since
+        // one side's view of `top` can lag behind a window move.
+        let best = null, bestShape = Infinity, bestVertical = Infinity;
+        for (const w of wins) {
+          if (w.type && w.type !== "normal") continue;
+          const shape = Math.abs(w.left - cmd.matchLeft)
+                      + Math.abs(w.width - cmd.matchWidth)
+                      + Math.abs(w.height - cmd.matchHeight);
+          if (shape > 40) continue;
+          const vertical = Math.abs(w.top - cmd.matchTop);
+          if (shape < bestShape || (shape === bestShape && vertical < bestVertical)) {
+            bestShape = shape; bestVertical = vertical; best = w;
+          }
+        }
+        if (best) windowId = best.id;
+      }
+
+      if (windowId == null && cmd.windowId != null &&
+          wins.some((w) => w.id === cmd.windowId)) {
+        windowId = cmd.windowId;
       }
       if (windowId == null) {
         const focused = await api.windows.getLastFocused();
         windowId = focused.id;
       }
+
       const tab = await api.tabs.create({ windowId, url: cmd.url, active: true });
       await api.windows.update(windowId, { focused: true });
-      // Report the id actually used so the app can refresh its view.
-      return { ok: true, tabId: tab.id, windowId: tab.windowId, usedFallback: windowId !== cmd.windowId };
+      return {
+        ok: true, tabId: tab.id, windowId: tab.windowId,
+        usedFallback: windowId !== cmd.windowId,
+      };
     }
+
     case "OPEN_NEW_WINDOW": {
       const win = await api.windows.create({ url: cmd.url });
       return { ok: true, windowId: win.id };

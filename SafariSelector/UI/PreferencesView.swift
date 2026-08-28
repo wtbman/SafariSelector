@@ -20,7 +20,7 @@ struct PreferencesView: View {
             profilesTab.tabItem { Label("Profiles", systemImage: "person.2") }
             rulesTab.tabItem { Label("Rules", systemImage: "arrow.triangle.branch") }
         }
-        .frame(width: 560, height: 380)
+        .frame(minWidth: 640, idealWidth: 660, minHeight: 480, idealHeight: 720)
         .onAppear { profiles = knownProfiles().sorted() }
     }
 
@@ -29,6 +29,12 @@ struct PreferencesView: View {
     @State private var defaultBrowser: String = ""
 
     private var generalTab: some View {
+        ScrollView {
+            generalContent.padding(14)
+        }
+    }
+
+    private var generalContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             GroupBox("Default web browser") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -98,7 +104,7 @@ struct PreferencesView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 10) {
-                        Text(guardStatus).font(.system(size: 11, weight: .medium))
+                        Text(guardStatus).font(.system(size: 12, weight: .medium))
                         if !UnsignedExtensionsGuard.hasAccessibilityPermission {
                             Button("Grant Accessibility…") {
                                 UnsignedExtensionsGuard.requestAccessibilityPermission()
@@ -107,22 +113,28 @@ struct PreferencesView: View {
                             .font(.system(size: 11))
                         }
                         Button("Check now") {
-                            UnsignedExtensionsGuard.ensureEnabled()
+                            let outcome = UnsignedExtensionsGuard.ensureEnabled()
+                            let time = Date().formatted(date: .omitted, time: .standard)
+                            lastCheck = "Checked at \(time): \(outcome.message)"
                             refreshGuard()
                         }
                         .font(.system(size: 11))
+                    }
+                    if !lastCheck.isEmpty {
+                        Text(lastCheck)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(6)
             }
-            Spacer()
         }
-        .padding(14)
         .onAppear { refreshDefault(); refreshGuard() }
     }
 
     @State private var guardStatus = ""
+    @State private var lastCheck = ""
 
     private func refreshGuard() {
         guard UnsignedExtensionsGuard.hasAccessibilityPermission else {
@@ -162,9 +174,14 @@ struct PreferencesView: View {
 
     private var profilesTab: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Name each Safari profile. Safari identifies profiles only by UUID, so these names are yours to set.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Name each Safari profile. Safari identifies profiles only by UUID, so these names are yours to set.")
+                    .font(.system(size: 13))
+                Text("A profile only appears here once Safari has run its extension in that profile. Safari starts an extension\u{2019}s background worker on activity, so after this app or Safari restarts, click a window in each profile, then press Refresh. Profiles missing from this list still show up in the picker — they are woken automatically when you pick one.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if profiles.isEmpty {
                 ContentUnavailableView(
@@ -179,12 +196,12 @@ struct PreferencesView: View {
                             TextField("Profile name", text: binding(for: uuid))
                                 .textFieldStyle(.roundedBorder)
                             Text(uuid)
-                                .font(.system(size: 9, design: .monospaced))
+                                .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Text(windowSummary(uuid))
-                            .font(.system(size: 10))
+                            .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 2)
@@ -212,7 +229,7 @@ struct PreferencesView: View {
     private var rulesTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Links matching a rule skip the picker. Rules name a tab group rather than a window, so they survive windows being opened and closed.")
-                .font(.system(size: 11))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
 
             List {

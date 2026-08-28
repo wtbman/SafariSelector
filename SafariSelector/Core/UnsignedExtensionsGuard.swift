@@ -40,25 +40,44 @@ enum UnsignedExtensionsGuard {
         }
     }
 
-    /// Turns the setting on if it is off. Returns true if it is on afterwards.
+    /// What a check actually did — so the UI can say something specific rather than
+    /// leaving the user wondering whether the button did anything.
+    enum Outcome {
+        case alreadyOn
+        case turnedOn
+        case couldNotTurnOn
+        case noPermission
+        case safariNotRunning
+
+        var message: String {
+            switch self {
+            case .alreadyOn:        return "already on — nothing to do"
+            case .turnedOn:         return "was off, switched it back on"
+            case .couldNotTurnOn:   return "tried to switch it on, but it is still off"
+            case .noPermission:     return "needs Accessibility permission"
+            case .safariNotRunning: return "couldn't read Safari's Develop menu — is Safari running?"
+            }
+        }
+    }
+
     @discardableResult
-    static func ensureEnabled() -> Bool {
+    static func ensureEnabled() -> Outcome {
         guard hasAccessibilityPermission else {
             log.info("no Accessibility permission; cannot manage the Develop menu")
-            return false
+            return .noPermission
         }
         switch currentState() {
         case .on:
-            return true
+            return .alreadyOn
         case .off:
             _ = run(clickScript)
             let nowOn = currentState() == .on
             DebugLog.write("Allow Unsigned Extensions was off; re-enabled: \(nowOn)")
-            return nowOn
+            return nowOn ? .turnedOn : .couldNotTurnOn
         case .unavailable:
             // Safari not running, Develop menu hidden, or Apple renamed the item.
             DebugLog.write("Allow Unsigned Extensions menu item not found")
-            return false
+            return .safariNotRunning
         }
     }
 

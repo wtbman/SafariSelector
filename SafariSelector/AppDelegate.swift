@@ -281,11 +281,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let view = PreferencesView(config: config, store: store) { [weak self] in
             self?.bridge.connectedProfiles ?? []
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 380),
-                              styleMask: [.titled, .closable, .miniaturizable],
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 720),
+                              // Resizable: the General tab grows as settings are added,
+                              // and a fixed window silently clips them.
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
         window.title = "SafariSelector Settings"
-        window.contentView = NSHostingView(rootView: view)
+        let hosting = NSHostingView(rootView: view)
+        hosting.sizingOptions = [.minSize]
+        window.contentView = hosting
+        window.setContentSize(NSSize(width: 660, height: 720))
         window.center()
         window.isReleasedWhenClosed = false
         preferencesWindow = window

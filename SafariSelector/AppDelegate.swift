@@ -65,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                 options: [.prettyPrinted, .sortedKeys])) ?? Data("[]".utf8)
         }
         LinkSource.beginTracking()
+        watchForSafariLaunches()
         bridge.start()
         opener = Opener(bridge: bridge, store: store)
         setUpStatusItem()
@@ -239,6 +240,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             let n = self.bridge.connectedProfiles.count
             status.title = "Connected profiles: \(n)"
+        }
+    }
+
+    /// Safari resets "Allow Unsigned Extensions" on every launch, which silently
+    /// disables the extension and sends every link to the wrong window.
+    private func watchForSafariLaunches() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier == "com.apple.Safari",
+                  self?.config.stored.autoAllowUnsignedExtensions == true
+            else { return }
+            // Safari needs a moment before its menu bar is scriptable.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                UnsignedExtensionsGuard.ensureEnabled()
+            }
+        }
+        if config.stored.autoAllowUnsignedExtensions {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                UnsignedExtensionsGuard.ensureEnabled()
+            }
         }
     }
 

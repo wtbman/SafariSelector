@@ -198,3 +198,23 @@ app, most targets will read `cold` until they are used**, which looks alarming a
 If waking genuinely fails — `profile did not wake for AppleScript window N` — the extension is not
 running in that profile at all. Check *Develop → Allow Unsigned Extensions* and that the extension
 is enabled; toggling it off and on restores it.
+
+## Signing does not remove the "Allow Unsigned Extensions" requirement — unless it is Developer ID
+
+Safari will load an extension without that switch only when the containing app came from the App
+Store, or — since **Safari 18.4** — is signed with a **Developer ID** *and notarized*.
+
+An **Apple Development** certificate, which is what a free Apple ID issues, does not qualify.
+Adding an Apple ID to Xcode is therefore not enough; Developer ID requires paid Apple Developer
+Program membership. Until then the switch has to stay on, and Safari clears it on every launch.
+
+The app can hold it on itself: *Settings → General → Safari extension* watches for Safari
+launching and re-ticks the menu item through Accessibility, reading
+`AXMenuItemMarkChar` to avoid toggling it *off* when it is already on. Off by default.
+
+## An accessory app can still show a Dock tile
+
+`NSApp.setActivationPolicy(.accessory)` called from `main.swift` before `app.run()` did not stick —
+the running app reported `.regular` and had a Dock tile. Re-asserting it in
+`applicationDidFinishLaunching` holds. Note that `LSUIElement` in Info.plist is not an option here:
+it also removes the app from the default-browser list.

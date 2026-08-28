@@ -80,10 +80,60 @@ struct PreferencesView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(6)
             }
+            GroupBox("Safari extension") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Keep \u{201C}Allow Unsigned Extensions\u{201D} switched on",
+                           isOn: Binding(
+                            get: { config.stored.autoAllowUnsignedExtensions },
+                            set: { on in
+                                config.stored.autoAllowUnsignedExtensions = on
+                                if on {
+                                    UnsignedExtensionsGuard.requestAccessibilityPermission()
+                                    UnsignedExtensionsGuard.ensureEnabled()
+                                }
+                                refreshGuard()
+                            }))
+                    Text("Safari resets this every time it launches, which silently disables the extension and sends links to the wrong window. Turning this on lets SafariSelector switch it back, which needs Accessibility permission. Not needed once the app is signed with a Developer ID and notarized, which requires paid Apple Developer Program membership.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 10) {
+                        Text(guardStatus).font(.system(size: 11, weight: .medium))
+                        if !UnsignedExtensionsGuard.hasAccessibilityPermission {
+                            Button("Grant Accessibility…") {
+                                UnsignedExtensionsGuard.requestAccessibilityPermission()
+                                refreshGuard()
+                            }
+                            .font(.system(size: 11))
+                        }
+                        Button("Check now") {
+                            UnsignedExtensionsGuard.ensureEnabled()
+                            refreshGuard()
+                        }
+                        .font(.system(size: 11))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+            }
             Spacer()
         }
         .padding(14)
-        .onAppear { refreshDefault() }
+        .onAppear { refreshDefault(); refreshGuard() }
+    }
+
+    @State private var guardStatus = ""
+
+    private func refreshGuard() {
+        guard UnsignedExtensionsGuard.hasAccessibilityPermission else {
+            guardStatus = "Accessibility permission not granted."
+            return
+        }
+        switch UnsignedExtensionsGuard.currentState() {
+        case .on:          guardStatus = "Allow Unsigned Extensions: on"
+        case .off:         guardStatus = "Allow Unsigned Extensions: OFF — the extension will not load"
+        case .unavailable: guardStatus = "Can't read the Develop menu (is Safari running, with the Develop menu enabled?)"
+        }
     }
 
     private var autoPreviewIsMatch: Bool {

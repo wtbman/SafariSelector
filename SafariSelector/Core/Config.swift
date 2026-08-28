@@ -39,6 +39,11 @@ final class Config: ObservableObject {
         /// "profile — tab group". Deliberately text rather than an id: window ids and
         /// even profile UUIDs change, but "Work*" keeps meaning what you meant.
         var autoSelectPattern: String = ""
+
+        /// Re-enable Safari's "Allow Unsigned Extensions" when it resets. Off by
+        /// default: it drives Safari's menus through Accessibility, which the user
+        /// should opt into knowingly.
+        var autoAllowUnsignedExtensions: Bool = false
     }
 
     /// Best target for the auto-select pattern, or nil if nothing matches.

@@ -139,7 +139,11 @@ resolved in three steps:
   the appex cannot read the app's token from Application Support. The bridge accepts token-less
   instances and relies on binding to loopback only, which means any local process can ask it to
   open a URL in Safari. Closing this needs an App Group container shared by the app and appex.
-- **Ad-hoc signing.** There is no Developer ID on this machine, so Safari requires
-  *Develop → Allow Unsigned Extensions*, which resets on every Safari relaunch.
+- **Signing.** Safari loads an extension without *Develop → Allow Unsigned Extensions* only if it
+  came from the App Store or — since Safari 18.4 — is signed with a **Developer ID** and notarized.
+  An "Apple Development" certificate from a free Apple ID is **not** sufficient; Developer ID
+  requires paid Apple Developer Program membership. Until then that switch must stay on, and Safari
+  resets it on every launch. *Settings → General → Safari extension* can switch it back
+  automatically, by driving Safari's Develop menu through Accessibility. It is off by default.
 - **Tab group names are not unique.** Two profiles could each have a group called "Work"; the
   learned group→profile mapping would then be ambiguous. Rules pin a profile UUID as well.

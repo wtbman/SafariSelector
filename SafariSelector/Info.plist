@@ -50,7 +50,7 @@
 		</dict>
 	</array>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>SafariSelector reads your open Safari window titles so it can show you which tab group each window is displaying.</string>
+	<string>SafariSelector reads your Safari window titles, and can switch Safariu2019s Allow Unsigned Extensions setting back on when Safari resets it.</string>
 	<key>SFSafariWebExtensionConverterVersion</key>
 	<string>26.6</string>
 </dict>

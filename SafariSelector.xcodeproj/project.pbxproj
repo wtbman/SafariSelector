@@ -10,6 +10,19 @@
 	<string>77</string>
 	<key>objects</key>
 	<dict>
+		<key>04447F62685041AC9EF08C0E</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>name</key>
+			<string>UnsignedExtensionsGuard.swift</string>
+			<key>path</key>
+			<string>Core/UnsignedExtensionsGuard.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
 		<key>08527B7CC0494F16B782A8AB</key>
 		<dict>
 			<key>fileRef</key>
@@ -124,6 +137,13 @@
 		<dict>
 			<key>fileRef</key>
 			<string>B15741569CA6474C832142F9</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
+		<key>83B69EB3122544CE84F99089</key>
+		<dict>
+			<key>fileRef</key>
+			<string>04447F62685041AC9EF08C0E</string>
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
@@ -376,6 +396,7 @@
 				<string>544C197DC0DB4879A83C424D</string>
 				<string>BF5AFD51399E43198317BC03</string>
 				<string>7201A69121C348F4BA720F60</string>
+				<string>83B69EB3122544CE84F99089</string>
 			</array>
 			<key>isa</key>
 			<string>PBXSourcesBuildPhase</string>
@@ -489,6 +510,7 @@
 				<string>97E4A47ECDB54F42A5449CC1</string>
 				<string>6DA5AECC26914E94A245E682</string>
 				<string>B15741569CA6474C832142F9</string>
+				<string>04447F62685041AC9EF08C0E</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>

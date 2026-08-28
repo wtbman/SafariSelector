@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "SafariSelector Spike",
+  "version": "0.1",
+  "description": "Probe: does tabs.create({windowId}) join the window's active tab group?",
+  "permissions": ["tabs", "storage", "nativeMessaging"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "action": { "default_popup": "popup.html", "default_title": "SafariSelector Spike" },
+  "background": { "service_worker": "background.js" }
+}

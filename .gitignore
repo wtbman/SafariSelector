@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+._*
+.Trashes
+
+# Xcode
+build/
+DerivedData/
+DD/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.hmap
+*.dSYM
+*.dSYM.zip

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 12px -apple-system, system-ui, sans-serif; margin: 0; padding: 10px; width: 460px; }
+    h2 { font-size: 11px; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: .04em; opacity: .6; }
+    h2:first-child { margin-top: 0; }
+    pre { background: rgba(127,127,127,.12); padding: 8px; border-radius: 6px; margin: 0;
+          white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; font-size: 11px; }
+    .win { border: 1px solid rgba(127,127,127,.35); border-radius: 6px; padding: 8px; margin-bottom: 6px; }
+    .meta { opacity: .65; margin: 2px 0 6px; }
+    button { font: inherit; padding: 3px 8px; }
+    #status, #post, #native { margin-top: 6px; font-size: 11px; }
+    #status { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h2>Capabilities</h2>
+  <pre id="caps">…</pre>
+  <h2>Windows (raw)</h2>
+  <pre id="raw">…</pre>
+  <h2>Open test URL into a window</h2>
+  <div id="wins"></div>
+  <div id="status"></div>
+  <div id="native">native: …</div>
+  <div id="post">collector: …</div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // has finished launching does not reliably stick, and the app then shows a
         // Dock tile it has no use for.
         NSApp.setActivationPolicy(.accessory)
+        installMainMenu()
         store = TargetStore(config: config)
         do {
             bridge = try BridgeServer()
@@ -226,6 +227,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Menu bar
+
+    /// The app has no storyboard, so it has no main menu unless one is built here.
+    /// Without an Edit menu, ⌘V/⌘C/⌘X/⌘A do nothing in the Settings text fields —
+    /// AppKit routes those shortcuts through the menu items, not the field.
+    private func installMainMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "Quit SafariSelector",
+                                   action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        edit.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        edit.addItem(.separator())
+        edit.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        edit.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        edit.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        edit.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        NSApp.mainMenu = main
+    }
 
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)

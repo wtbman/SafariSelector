@@ -272,10 +272,17 @@ struct PreferencesView: View {
                         }
                         .labelsHidden()
                         .font(.system(size: 14))
+                        Button {
+                            config.stored.rules.removeAll { $0.id == rule.id }
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Remove this rule")
                     }
                     .padding(.vertical, 3)
                 }
-                .onDelete { config.stored.rules.remove(atOffsets: $0) }
             }
 
             HStack {
@@ -288,9 +295,6 @@ struct PreferencesView: View {
                     ))
                 }
                 Spacer()
-                Text("Select a rule and press Delete to remove it.")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(14)

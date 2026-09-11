@@ -12,10 +12,27 @@ const execFileP = promisify(execFile);
 // JSON.stringify'd value is the result.
 export async function jxa(body, timeoutMs = 15000) {
   const script = `const s = Application("Safari"); ${body}`;
-  const { stdout } = await execFileP("osascript", ["-l", "JavaScript", "-e", script], {
-    timeout: timeoutMs,
-    maxBuffer: 32 * 1024 * 1024,
-  });
+  let stdout;
+  try {
+    ({ stdout } = await execFileP("osascript", ["-l", "JavaScript", "-e", script], {
+      timeout: timeoutMs,
+      maxBuffer: 32 * 1024 * 1024,
+    }));
+  } catch (e) {
+    // Say what actually went wrong rather than echoing the script. The two
+    // common failures are both about the *client* process, not Safari:
+    // macOS Automation permission (TCC) is granted per app, so a server
+    // launched by VS Code, Codex etc. needs its own grant, and the first
+    // attempt blocks on a consent dialog until it is answered.
+    const stderr = (e.stderr || "").trim();
+    if (e.killed || e.signal) {
+      throw new Error(`AppleScript timed out after ${timeoutMs}ms. If this is the first use from this app, macOS is probably showing an Automation consent dialog ("… wants access to control Safari") — accept it, or grant it under System Settings › Privacy & Security › Automation › <this app> › Safari.`);
+    }
+    if (/-1743|not authori[sz]ed/i.test(stderr)) {
+      throw new Error(`macOS denied Automation access to Safari for the app running this MCP server. Enable it under System Settings › Privacy & Security › Automation › <that app> › Safari. (${stderr})`);
+    }
+    throw new Error(`AppleScript failed: ${stderr || e.message}`);
+  }
   const out = stdout.trim();
   return out ? JSON.parse(out) : null;
 }

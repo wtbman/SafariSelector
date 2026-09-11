@@ -1,0 +1,16 @@
+{
+  "name": "safari-selector-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server exposing Safari windows/tabs to an agent via AppleScript and the SafariSelector app bridge.",
+  "bin": { "safari-mcp": "./server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  }
+}

@@ -12,7 +12,42 @@ import Foundation
 
 /// Wire types for the loopback bridge between the app and each profile's extension
 /// instance. Kept free of any networking so it can be unit-tested directly.
-enum Bridge {
+nonisolated enum Bridge {
+
+    /// Arbitrary JSON, for command arguments and results whose shape the app does
+    /// not need to know: the MCP server and the extension agree on those between
+    /// themselves, and the app only relays them.
+    indirect enum JSONValue: Codable, Hashable {
+        case null
+        case bool(Bool)
+        case number(Double)
+        case string(String)
+        case array([JSONValue])
+        case object([String: JSONValue])
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if c.decodeNil() { self = .null }
+            else if let v = try? c.decode(Bool.self) { self = .bool(v) }
+            else if let v = try? c.decode(Double.self) { self = .number(v) }
+            else if let v = try? c.decode(String.self) { self = .string(v) }
+            else if let v = try? c.decode([JSONValue].self) { self = .array(v) }
+            else if let v = try? c.decode([String: JSONValue].self) { self = .object(v) }
+            else { throw DecodingError.dataCorruptedError(in: c, debugDescription: "not JSON") }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .null: try c.encodeNil()
+            case .bool(let v): try c.encode(v)
+            case .number(let v): try c.encode(v)
+            case .string(let v): try c.encode(v)
+            case .array(let v): try c.encode(v)
+            case .object(let v): try c.encode(v)
+            }
+        }
+    }
 
     /// One window as reported by an extension instance. Deliberately does not carry
     /// the tab array: windows here routinely hold 200+ tabs, and the app only needs
@@ -49,6 +84,8 @@ enum Bridge {
         var matchTop: Int?
         var matchWidth: Int?
         var matchHeight: Int?
+        /// Free-form arguments for relayed commands (see `relay`).
+        var args: JSONValue?
 
         static func open(windowId: Int, url: String,
                          match: (left: Int, top: Int, width: Int, height: Int)?) -> Command {
@@ -60,6 +97,11 @@ enum Bridge {
             Command(commandId: UUID().uuidString, type: "OPEN_NEW_WINDOW", windowId: nil, url: url)
         }
         static let idle = Command(commandId: "", type: "IDLE", windowId: nil, url: nil)
+        /// A command the app relays verbatim on behalf of a local client (the MCP
+        /// server) — tab listing, closing, moving. The app does not interpret it.
+        static func relay(type: String, args: JSONValue?) -> Command {
+            Command(commandId: UUID().uuidString, type: type, windowId: nil, url: nil, args: args)
+        }
     }
 
     struct CommandResult: Codable {
@@ -70,6 +112,8 @@ enum Bridge {
         /// True when the extension had to ignore the supplied window id because it
         /// had gone stale, and used the focused window instead.
         var usedFallback: Bool?
+        /// Free-form result payload for relayed commands.
+        var data: JSONValue?
     }
 
     struct ResultEnvelope: Codable {

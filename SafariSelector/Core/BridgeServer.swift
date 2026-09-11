@@ -23,6 +23,9 @@ import os.log
 ///   POST /snapshot  — an instance reports its windows
 ///   GET  /poll      — an instance parks here until the app has a command for it
 ///   POST /result    — an instance reports a command's outcome
+///   GET  /status    — read-only view of what the app can open into
+///   POST /command   — a local client (the MCP server) relays a command to one
+///                     profile's instance and gets its result back. Token required.
 final class BridgeServer {
 
     static let port: UInt16 = 53127
@@ -184,6 +187,26 @@ final class BridgeServer {
             if let cb = pending.removeValue(forKey: env.commandId) { cb(env.result) }
             respond(conn, status: 200, json: ["ok": true])
 
+        case ("POST", "/command"):
+            // Unlike the extension routes, a missing token is not tolerated here:
+            // this endpoint can close tabs.
+            guard let req = try? JSONDecoder().decode(RelayRequest.self, from: body),
+                  let token = req.token, token == self.token else {
+                respond(conn, status: 403, json: ["error": "bad token"]); return
+            }
+            let cmd = Bridge.Command.relay(type: req.type, args: req.args)
+            Task {
+                let result = await self.send(cmd, to: req.profileUUID, timeout: req.timeout ?? 15)
+                self.queue.async {
+                    if let result {
+                        self.respond(conn, status: 200, jsonEncodable: result)
+                    } else {
+                        self.respond(conn, status: 504,
+                                     json: ["error": "profile \(req.profileUUID) did not answer \(req.type)"])
+                    }
+                }
+            }
+
         case ("GET", "/status"):
             // Read-only introspection: what the app currently believes is openable.
             let body = statusProvider?(Array(knownProfiles)) ?? Data("[]".utf8)
@@ -219,6 +242,15 @@ final class BridgeServer {
             if self.waiters[profile] != nil { self.waiters.removeValue(forKey: profile) }
             reply(Bridge.Command.idle)
         }
+    }
+
+    /// Body of `POST /command`.
+    private struct RelayRequest: Decodable {
+        let token: String?
+        let profileUUID: String
+        let type: String
+        var args: Bridge.JSONValue?
+        var timeout: TimeInterval?
     }
 
     // MARK: - Responses

@@ -67,8 +67,19 @@ enum AppleScriptProbe {
         repeat with w in windows
             try
                 set b to bounds of w
+                -- A freshly opened window's empty tab has no URL or name (missing
+                -- value), and concatenating that throws. Default each field
+                -- separately so such a window is still listed rather than dropped.
+                set u to ""
+                set t to ""
+                try
+                    set u to (URL of current tab of w) as text
+                end try
+                try
+                    set t to (name of current tab of w) as text
+                end try
                 set out to out & (id of w as text) & "\t" & (name of w) & "\t" ¬
-                    & (URL of current tab of w) & "\t" & (name of current tab of w) & "\t" ¬
+                    & u & "\t" & t & "\t" ¬
                     & (count of tabs of w) & "\t" ¬
                     & (item 1 of b as text) & "," & (item 2 of b as text) & "," ¬
                     & (item 3 of b as text) & "," & (item 4 of b as text) & "\n"

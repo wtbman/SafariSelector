@@ -40,6 +40,21 @@ Then install it:
 ./scripts/install.sh
 ```
 
+## Agent access (MCP)
+
+`mcp/` is an [MCP](https://modelcontextprotocol.io) server that lets an AI agent (Claude Code,
+Codex, GitHub Copilot, …) see and manage Safari tabs: list windows and tabs across every profile
+with tab-group labels, find stale or duplicate tabs, close, move tabs between windows (which places
+them in the target window's tab group), open a URL into a chosen tab group, and bring a tab to the
+front. See [`mcp/README.md`](mcp/README.md).
+
+```bash
+cd mcp && npm install
+```
+
+`.mcp.json` registers it as `safari` for Claude Code in this repository. Elsewhere, point the client
+at `node /path/to/SafariSelector/mcp/server.js`.
+
 ## Licence
 
 GNU General Public License v3.0 — see [LICENSE](LICENSE).

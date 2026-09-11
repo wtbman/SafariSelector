@@ -49,9 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         bridge.statusProvider = { [weak self] connected in
             guard let self else { return Data("[]".utf8) }
-            // Deliberately does not block on a rebuild: this runs on the bridge
-            // queue, and the AppleScript pass belongs on its own queue.
-            self.store.rebuild()
+            // Wait for a fresh AppleScript pass (bounded) so a window opened a
+            // moment ago is in the answer rather than the next one. This runs on
+            // the bridge queue; the rebuild itself stays on the AppleScript queue.
+            let done = DispatchSemaphore(value: 0)
+            self.store.rebuild { done.signal() }
+            _ = done.wait(timeout: .now() + 3)
             let rows = self.store.targets.map {
                 [
                     "profileUUID": $0.profileUUID,

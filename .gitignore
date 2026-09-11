@@ -13,3 +13,6 @@ xcuserdata/
 *.hmap
 *.dSYM
 *.dSYM.zip
+
+# Node (mcp/)
+node_modules/

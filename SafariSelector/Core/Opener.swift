@@ -22,6 +22,11 @@ final class Opener {
     private let store: TargetStore
     private let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "opener")
 
+    /// Called when a link had to go to Safari directly because the extension is not
+    /// running. The link has already been opened by then; this is for telling the
+    /// user, not for retrying. Always on the main queue.
+    var onExtensionUnavailable: (() -> Void)?
+
     init(bridge: BridgeServer, store: TargetStore) {
         self.bridge = bridge
         self.store = store
@@ -34,6 +39,7 @@ final class Opener {
         guard let warm = await resolve(target) else {
             log.error("could not resolve target for \(url.absoluteString, privacy: .public)")
             openInSafariDirectly(url)
+            reportExtensionUnavailable()
             return
         }
         let match = target.bounds.map {
@@ -58,9 +64,16 @@ final class Opener {
         guard let result, result.ok else {
             log.error("open failed: \(result?.error ?? "no response", privacy: .public)")
             openInSafariDirectly(url)
+            // No answer at all means the worker is gone; an error means it is there
+            // and something else went wrong, which is not the extension being off.
+            if result == nil { reportExtensionUnavailable() }
             return
         }
         activateSafari()
+    }
+
+    private func reportExtensionUnavailable() {
+        DispatchQueue.main.async { self.onExtensionUnavailable?() }
     }
 
     /// Turns a possibly-cold target into live extension coordinates.
@@ -82,9 +95,17 @@ final class Opener {
             }
         }
 
+        // Waking normally takes one attempt (~700ms). Keep trying for ten seconds
+        // when some profile is talking to us, since Safari can be slow to start a
+        // worker; but when *nothing* has connected since this process started, the
+        // extension is almost certainly not running at all — after a reinstall, or
+        // with "Allow unsigned extensions" reset — and a long wait just delays the
+        // fallback and makes the app look hung.
+        let attempts = bridge.connectedProfiles.isEmpty ? 8 : 40
+
         // Re-derive both views on each attempt and match on the AppleScript window
         // id, which is stable within a Safari session.
-        for attempt in 0..<40 {
+        for attempt in 0..<attempts {
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
                 store.rebuild { c.resume() }
             }
@@ -103,7 +124,11 @@ final class Opener {
     func openInNewWindow(_ url: URL, profileUUID: String?) async {
         guard let profileUUID else { openInSafariDirectly(url); return }
         let result = await bridge.send(.openNewWindow(url: url.absoluteString), to: profileUUID)
-        guard let result, result.ok else { openInSafariDirectly(url); return }
+        guard let result, result.ok else {
+            openInSafariDirectly(url)
+            if result == nil { reportExtensionUnavailable() }
+            return
+        }
         activateSafari()
     }
 

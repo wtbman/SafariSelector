@@ -197,8 +197,30 @@ This is not a fault to fix at startup: the wake-on-demand path handles it at the
 app, most targets will read `cold` until they are used**, which looks alarming and is not.
 
 If waking genuinely fails — `profile did not wake for AppleScript window N` — the extension is not
-running in that profile at all. Check *Develop → Allow Unsigned Extensions* and that the extension
-is enabled; toggling it off and on restores it.
+running in that profile at all. Check that the extension is enabled and that *Allow unsigned
+extensions* is on; toggling the extension off and on restores it.
+
+**Reinstalling the app is the common cause.** Replacing the `.appex` under a running Safari kills
+every profile's worker, and Safari never restarts them: the extension still shows as enabled in
+Settings › Extensions, `connectedProfiles` stays empty, and focusing a window wakes nothing. Every
+link then falls through to Safari's frontmost window. Seen 2026-09-11 — the app was reinstalled
+at 14:50, and every link for the next hour landed in the wrong window while the log said
+`warm=false … profile did not wake`. (The debug log is in UTC; the local clock is not. Check
+before concluding that an earlier "successful" open came from the same process.)
+
+The app now shortens the wake wait to two seconds when nothing has connected since it started,
+still hands the link to Safari, and shows a one-per-outage alert with buttons that open Safari's
+Extensions settings and Developer settings. Toggling the checkbox *for* the user through
+Accessibility was tried and is not reliable on Safari 26: the off click lands, the on click is
+silently ignored, and the extension is left off. Don't.
+
+## "Allow Unsigned Extensions" moved in Safari 26
+
+It is no longer a Develop menu item. It is a checkbox, *Allow unsigned extensions*, in the window
+opened by *Develop → Developer Settings…* (titled "Developer"). `UnsignedExtensionsGuard` handles
+both: the menu item first, then the pane, which it opens, reads or toggles, and closes again. In
+that window `entire contents` returns nothing, so the checkbox is found by a recursive walk over
+`UI elements`, by label.
 
 ## Signing does not remove the "Allow Unsigned Extensions" requirement — unless it is Developer ID
 

@@ -109,7 +109,7 @@ struct PreferencesView: View {
                                 }
                                 refreshGuard()
                             }))
-                    Text("Safari resets this every time it launches, which silently disables the extension and sends links to the wrong window. Turning this on lets SafariSelector switch it back, which needs Accessibility permission. Not needed once the app is signed with a Developer ID and notarized, which requires paid Apple Developer Program membership.")
+                    Text("Safari resets this every time it launches, which silently disables the extension and sends links to the wrong window. Turning this on lets SafariSelector switch it back, which needs Accessibility permission. Not needed once the app is signed with a Developer ID and notarized, which requires paid Apple Developer Program membership.\n\nIf the extension stops after a reinstall, switching it off and on in Safari\u{2019}s Extensions settings restarts it.")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -129,6 +129,8 @@ struct PreferencesView: View {
                             refreshGuard()
                         }
                         .font(.system(size: 13))
+                        Button("Open Safari Extension Settings…") { SafariExtension.showSettings() }
+                            .font(.system(size: 13))
                     }
                     if !lastCheck.isEmpty {
                         Text(lastCheck)

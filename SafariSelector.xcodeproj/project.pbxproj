@@ -200,6 +200,19 @@
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
+		<key>AE1EFCFA75D849B08798FDB8</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>name</key>
+			<string>SafariExtension.swift</string>
+			<key>path</key>
+			<string>Core/SafariExtension.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
 		<key>B15741569CA6474C832142F9</key>
 		<dict>
 			<key>isa</key>
@@ -292,6 +305,13 @@
 			<string>UI/SelectorPanel.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
+		</dict>
+		<key>D8F56108759848F59C5BC6D7</key>
+		<dict>
+			<key>fileRef</key>
+			<string>AE1EFCFA75D849B08798FDB8</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
 		</dict>
 		<key>D94725FE30421BDC00331DAF</key>
 		<dict>
@@ -397,6 +417,7 @@
 				<string>BF5AFD51399E43198317BC03</string>
 				<string>7201A69121C348F4BA720F60</string>
 				<string>83B69EB3122544CE84F99089</string>
+				<string>D8F56108759848F59C5BC6D7</string>
 			</array>
 			<key>isa</key>
 			<string>PBXSourcesBuildPhase</string>
@@ -511,6 +532,7 @@
 				<string>6DA5AECC26914E94A245E682</string>
 				<string>B15741569CA6474C832142F9</string>
 				<string>04447F62685041AC9EF08C0E</string>
+				<string>AE1EFCFA75D849B08798FDB8</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>

@@ -26,6 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// interacting is a dismissal, not an unattended timeout.
     private var pickerWasTouched = false
     private var statusItem: NSStatusItem?
+    /// Shown in the menu while the extension is known to be down.
+    private var extensionStatusItem: NSMenuItem?
+    /// Whether the user has already been told about the current outage. One alert
+    /// per outage: a burst of links must not produce a burst of dialogs. Cleared
+    /// when any profile reports in again.
+    private var extensionOutageReported = false
 
     /// This app is the system's default browser. It must never route to itself.
     private static let ownBundleID = Bundle.main.bundleIdentifier ?? "cc.wtb.SafariSelector"
@@ -47,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         bridge.onSnapshot = { [weak self] profile, windows in
             self?.store.update(profileUUID: profile, windows: windows)
+            DispatchQueue.main.async { self?.extensionRecovered() }
         }
         bridge.statusProvider = { [weak self] connected in
             guard let self else { return Data("[]".utf8) }
@@ -82,7 +89,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watchForSafariLaunches()
         bridge.start()
         opener = Opener(bridge: bridge, store: store)
+        opener.onExtensionUnavailable = { [weak self] in self?.extensionUnavailable() }
         setUpStatusItem()
+    }
+
+    // MARK: - Extension outage
+
+    /// The link has already gone to Safari's frontmost window by the time this is
+    /// called. What the user needs now is to know why, and the shortest route to
+    /// fixing it — which is a switch in Safari's settings, not anything here.
+    private func extensionUnavailable() {
+        extensionStatusItem?.isHidden = false
+        guard !extensionOutageReported else { return }
+        extensionOutageReported = true
+        DebugLog.write("extension unavailable; link went to Safari directly")
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "SafariSelector's extension isn't running"
+        alert.informativeText = """
+        The link was opened in Safari's frontmost window instead of the one you chose.
+
+        Safari stops the extension when the app is reinstalled or when \u{201C}Allow unsigned extensions\u{201D} is reset, and doesn't start it again by itself. To restart it:
+
+        1. Safari › Settings › Extensions
+        2. Untick SafariSelector, then tick it again
+
+        If it won't turn on, check Safari › Develop › Developer Settings… › Allow unsigned extensions.
+        """
+        alert.addButton(withTitle: "Open Safari Extension Settings")
+        alert.addButton(withTitle: "Open Developer Settings")
+        alert.addButton(withTitle: "Not Now")
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: SafariExtension.showSettings()
+        case .alertSecondButtonReturn: UnsignedExtensionsGuard.showDeveloperSettings()
+        default: break
+        }
+    }
+
+    private func extensionRecovered() {
+        guard extensionOutageReported || extensionStatusItem?.isHidden == false else { return }
+        extensionOutageReported = false
+        extensionStatusItem?.isHidden = true
+        DebugLog.write("extension reconnected")
+    }
+
+    @objc private func openExtensionSettings() {
+        SafariExtension.showSettings()
     }
 
     // MARK: - URL entry point
@@ -265,14 +319,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         let status = NSMenuItem(title: "Connected profiles: —", action: nil, keyEquivalent: "")
         menu.addItem(status)
+        let outage = NSMenuItem(title: "⚠︎ Extension not running — toggle it in Safari › Settings › Extensions",
+                                action: #selector(openExtensionSettings), keyEquivalent: "")
+        outage.isHidden = true
+        menu.addItem(outage)
+        extensionStatusItem = outage
         menu.addItem(NSMenuItem(title: "Refresh Windows",
                                 action: #selector(refresh), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: "Open Safari Extension Settings…",
+                                action: #selector(openExtensionSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Settings…",
                                 action: #selector(showPreferences), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit SafariSelector",
                                 action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        for item in menu.items where item.action == #selector(refresh) || item.action == #selector(showPreferences) {
+        for item in menu.items where item.action != nil && item.action != #selector(NSApplication.terminate(_:)) {
             item.target = self
         }
         item.menu = menu

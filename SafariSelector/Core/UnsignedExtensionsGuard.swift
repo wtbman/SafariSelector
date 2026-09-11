@@ -10,9 +10,14 @@
 
 import AppKit
 import ApplicationServices
+import SafariServices
 import os.log
 
-/// Keeps Safari's *Develop → Allow Unsigned Extensions* switched on.
+/// Keeps Safari's *Allow unsigned extensions* switched on.
+///
+/// Where that switch lives moved in Safari 26: it used to be a Develop menu item, and
+/// is now a checkbox in *Develop → Developer Settings…*. Both locations are handled,
+/// the menu item first because it is cheaper and does not open a window.
 ///
 /// Safari refuses to load an extension unless it came from the App Store or — since
 /// Safari 18.4 — is signed with a **Developer ID** and notarized, which requires paid
@@ -38,15 +43,26 @@ enum UnsignedExtensionsGuard {
         return AXIsProcessTrustedWithOptions(options as CFDictionary)
     }
 
-    /// State of the menu item, without changing it.
+    /// State of the switch, without changing it.
     enum State { case on, off, unavailable }
 
     static func currentState() -> State {
-        guard let result = run(readScript) else { return .unavailable }
-        switch result.trimmingCharacters(in: .whitespacesAndNewlines) {
+        // Older Safari: a Develop menu item.
+        if let result = run(readMenuScript), let state = parse(result), state != .unavailable {
+            return state
+        }
+        // Safari 26+: a checkbox in the Developer settings pane. Reading it means
+        // opening that pane, which is closed again afterwards.
+        guard let result = run(readDeveloperPaneScript) else { return .unavailable }
+        return parse(result) ?? .unavailable
+    }
+
+    private static func parse(_ raw: String) -> State? {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines) {
         case "on": return .on
         case "off": return .off
-        default: return .unavailable
+        case "unavailable": return .unavailable
+        default: return nil
         }
     }
 
@@ -65,7 +81,7 @@ enum UnsignedExtensionsGuard {
             case .turnedOn:         return "was off, switched it back on"
             case .couldNotTurnOn:   return "tried to switch it on, but it is still off"
             case .noPermission:     return "needs Accessibility permission"
-            case .safariNotRunning: return "couldn't read Safari's Develop menu — is Safari running?"
+            case .safariNotRunning: return "couldn't find the switch — is Safari running, with the Develop menu shown?"
             }
         }
     }
@@ -80,21 +96,35 @@ enum UnsignedExtensionsGuard {
         case .on:
             return .alreadyOn
         case .off:
-            _ = run(clickScript)
-            let nowOn = currentState() == .on
-            DebugLog.write("Allow Unsigned Extensions was off; re-enabled: \(nowOn)")
+            if run(clickMenuScript).map(parse) == .on {
+                DebugLog.write("Allow Unsigned Extensions was off; re-enabled via menu")
+                return .turnedOn
+            }
+            let nowOn = run(clickDeveloperPaneScript).map(parse) == .on
+            DebugLog.write("Allow unsigned extensions was off; re-enabled via Developer settings: \(nowOn)")
             return nowOn ? .turnedOn : .couldNotTurnOn
         case .unavailable:
-            // Safari not running, Develop menu hidden, or Apple renamed the item.
-            DebugLog.write("Allow Unsigned Extensions menu item not found")
+            // Safari not running, Develop menu hidden, or Apple moved it again.
+            DebugLog.write("Allow unsigned extensions switch not found")
             return .safariNotRunning
         }
     }
 
+    /// Opens *Develop → Developer Settings…* for the user, so a manual fix is one
+    /// click away when the automatic one is not available.
+    static func showDeveloperSettings() {
+        _ = run("""
+        tell application "Safari" to activate
+        tell application "System Events" to tell process "Safari"
+            click menu item "Developer Settings…" of menu 1 of menu bar item "Develop" of menu bar 1
+        end tell
+        """)
+    }
+
     // MARK: - Scripts
 
-    /// A menu item's checkmark shows up as its AXMenuItemMarkChar.
-    private static let readScript = """
+    /// Pre-26 Safari: a menu item whose checkmark shows up as its AXMenuItemMarkChar.
+    private static let readMenuScript = """
     tell application "System Events"
         if not (exists process "Safari") then return "unavailable"
         tell process "Safari"
@@ -115,7 +145,7 @@ enum UnsignedExtensionsGuard {
     end tell
     """
 
-    private static let clickScript = """
+    private static let clickMenuScript = """
     tell application "System Events"
         tell process "Safari"
             try
@@ -124,7 +154,73 @@ enum UnsignedExtensionsGuard {
             end try
         end tell
     end tell
-    """
+    """ + readMenuScript
+
+    /// Safari 26+: the Developer settings pane. Its window is titled "Developer".
+    /// The checkbox is found by label with a recursive walk — `entire contents`
+    /// returns nothing for this window, and hard-coding the group nesting would
+    /// break on the next layout change. The pane is closed again if this opened it.
+    private static func developerPaneScript(click: Bool) -> String {
+        """
+        on findBox(e, wanted, depth)
+            if depth > 8 then return missing value
+            tell application "System Events"
+                try
+                    if class of e is checkbox and name of e is wanted then return e
+                end try
+                try
+                    repeat with c in UI elements of e
+                        set found to my findBox(c, wanted, depth + 1)
+                        if found is not missing value then return found
+                    end repeat
+                end try
+            end tell
+            return missing value
+        end findBox
+
+        tell application "System Events"
+            if not (exists process "Safari") then return "unavailable"
+            tell process "Safari"
+                set alreadyOpen to exists window "Developer"
+                if not alreadyOpen then
+                    try
+                        click menu item "Developer Settings…" of menu 1 of ¬
+                            menu bar item "Develop" of menu bar 1
+                    on error
+                        return "unavailable"
+                    end try
+                end if
+                set outcome to "unavailable"
+                set cb to missing value
+                repeat 30 times
+                    if exists window "Developer" then
+                        set cb to my findBox(window "Developer", "Allow unsigned extensions", 0)
+                        if cb is not missing value then exit repeat
+                    end if
+                    delay 0.1
+                end repeat
+                if cb is not missing value then
+                    \(click ? "click cb" : "")
+                    delay 0.2
+                    if (value of cb as integer) is 1 then
+                        set outcome to "on"
+                    else
+                        set outcome to "off"
+                    end if
+                end if
+                if not alreadyOpen and (exists window "Developer") then
+                    try
+                        click (first button of window "Developer" whose subrole is "AXCloseButton")
+                    end try
+                end if
+                return outcome
+            end tell
+        end tell
+        """
+    }
+
+    private static var readDeveloperPaneScript: String { developerPaneScript(click: false) }
+    private static var clickDeveloperPaneScript: String { developerPaneScript(click: true) }
 
     private static func run(_ source: String) -> String? {
         var error: NSDictionary?

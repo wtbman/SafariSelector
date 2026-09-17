@@ -61,8 +61,10 @@ SafariSelector Extension.appex        enabled once, active in every profile
 
 Not a WebSocket. The spike verified `fetch()` to `http://127.0.0.1` works from a Safari
 extension; `ws://` was never verified, and building on the transport we have evidence for was
-the safer call. Long-polling also has a useful side effect: an in-flight `fetch` keeps the MV3
-background worker alive.
+the safer call. A pending `fetch` did not reliably keep Safari's MV3 worker alive in
+live use. The macOS extension now uses a Manifest V2 persistent background page,
+with the same permissions. Optional history initialization runs independently of
+the bridge, and discovery and network requests have bounded deadlines.
 
 - `POST /snapshot` — an instance reports its windows
 - `GET /poll` — an instance parks here (30s) until the app has a command for it
@@ -75,16 +77,17 @@ in that gap were silently lost and fell back to a plain Safari open.
 
 ### Cold targets and waking
 
-Safari only runs an extension's background worker in profiles it considers active. A window in a
-dormant profile therefore has no WebExtension window id, and cannot be opened into.
+With the former MV3 worker, Safari only ran background content in profiles it
+considered active. The persistent macOS background page removes that dependency,
+but a profile without a snapshot still has no WebExtension window id to open into.
 
 Rather than hide those windows, the picker lists them as **cold** targets — AppleScript sees them,
 so they are always in the list. When one is chosen, the app focuses that window via AppleScript,
-which fires `windows.onFocusChanged` inside that profile and starts its worker. The worker
-connects, reports its windows, and the target is matched back **by AppleScript window id** (not by
-active tab URL, which can be stale by then). Then the open proceeds normally.
+and waits for its background page to connect and report windows. Focus is not a
+guarantee of recovery. The target is matched back **by AppleScript window id** (not
+by active tab URL, which can be stale), and a PING must succeed before opening.
 
-Dormancy stops being a limitation and becomes a step in the flow.
+If the page remains unavailable, the normal Safari fallback still applies.
 
 ### Labelling
 

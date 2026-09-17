@@ -1,11 +1,13 @@
 // SafariSelector bridge.
 //
-// One instance of this worker runs per Safari profile. It reports that profile's
+// One persistent background page runs per Safari profile. It reports that profile's
 // windows to the SafariSelector app and executes open commands on the app's behalf.
 //
 // Transport is HTTP long-polling against 127.0.0.1 rather than a WebSocket: the
 // capability spike verified that fetch() to loopback works from a Safari extension,
-// ws:// was never verified, and an in-flight fetch keeps the MV3 worker alive.
+// ws:// was never verified. This macOS-only extension uses a Manifest V2 persistent
+// page: a pending fetch did NOT reliably keep Safari's MV3 worker alive, and focusing
+// the chosen window did not reliably wake it. External links need a ready listener.
 //
 // Opening via tabs.create({windowId}) is the whole point — Safari implicitly places
 // the new tab in whatever tab group that window is currently showing. There is no
@@ -21,12 +23,42 @@ let profileUUID = null;
 let token = null;
 let backoff = 500;
 
+// A hung optional API or network request must not permanently wedge the bridge.
+async function withTimeout(operation, milliseconds) {
+  let timer;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("bridge operation timed out")), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function request(path, options = {}, milliseconds = 5000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), milliseconds);
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      ...options, cache: "no-store", signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`${path.split("?")[0]} HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---------------------------------------------------------------- discovery
 
 // The native handler is the only thing that knows which profile we are: Safari
 // passes it SFExtensionProfileKey. It also hands back the shared auth token.
 async function discover() {
-  const res = await api.runtime.sendNativeMessage("application.id", { type: "discover" });
+  const res = await withTimeout(
+    api.runtime.sendNativeMessage("application.id", { type: "discover" }), 5000);
   if (!res || !res.profileUUID) throw new Error("discover: no profileUUID in " + JSON.stringify(res));
   profileUUID = res.profileUUID;
   token = res.token || null;
@@ -107,8 +139,10 @@ async function snapshot() {
 }
 
 async function push() {
-  const windows = await snapshot();
-  await fetch(`${BASE}/snapshot`, {
+  // Events can arrive before discovery or while the app is reconnecting.
+  if (!profileUUID) return;
+  const windows = await withTimeout(snapshot(), 5000);
+  await request("/snapshot", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ profileUUID, token, windows }),
@@ -228,7 +262,10 @@ async function execute(cmd) {
       return { ok: true, data: { windowId: t.windowId } };
     }
     case "PING":
-      return { ok: true };
+      return { ok: true, data: {
+        version: api.runtime.getManifest().version,
+        backgroundMode: "persistent",
+      } };
     default:
       return { ok: false, error: "unknown command " + cmd.type };
   }
@@ -245,7 +282,7 @@ async function assertKnownTabIds(ids) {
 }
 
 async function respond(cmd, result) {
-  await fetch(`${BASE}/result`, {
+  await request("/result", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ profileUUID, token, commandId: cmd.commandId, result }),
@@ -255,28 +292,18 @@ async function respond(cmd, result) {
 // --------------------------------------------------------------- poll loop
 
 async function pollOnce() {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), POLL_TIMEOUT_MS + 5000);
-  try {
-    const url = `${BASE}/poll?profile=${encodeURIComponent(profileUUID)}` +
-                (token ? `&token=${encodeURIComponent(token)}` : "");
-    const r = await fetch(url, { signal: ctl.signal });
-    if (!r.ok) throw new Error("poll HTTP " + r.status);
-    const body = await r.json();
-    if (body && body.type && body.type !== "IDLE") {
-      let result;
-      try {
-        // Never let a hung tabs API call wedge the poll loop.
-        const timeout = new Promise((_, rej) =>
-          setTimeout(() => rej(new Error(body.type + " timed out in extension")), 10000));
-        result = await Promise.race([execute(body), timeout]);
-      } catch (e) {
-        result = { ok: false, error: String(e && e.message ? e.message : e) };
-      }
-      await respond(body, result);
+  const path = `/poll?profile=${encodeURIComponent(profileUUID)}` +
+               (token ? `&token=${encodeURIComponent(token)}` : "");
+  const body = await request(path, {}, POLL_TIMEOUT_MS + 5000);
+  if (body && body.type && body.type !== "IDLE") {
+    let result;
+    try {
+      // Never let a hung tabs API call wedge the poll loop.
+      result = await withTimeout(execute(body), 10000);
+    } catch (e) {
+      result = { ok: false, error: String(e && e.message ? e.message : e) };
     }
-  } finally {
-    clearTimeout(timer);
+    await respond(body, result);
   }
 }
 
@@ -307,4 +334,7 @@ for (const ev of [
   try { ev.addListener(schedulePush); } catch (e) { /* not all events exist everywhere */ }
 }
 
-loadActivity().catch(() => {}).then(run);
+// History is optional. In Safari a storage/tab API can stall; waiting for it used
+// to prevent discovery and polling from ever starting in that profile.
+loadActivity().catch(() => {});
+run();

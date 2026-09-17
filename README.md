@@ -45,6 +45,7 @@ Run the settings and auto-select regression checks without launching Safari:
 ```bash
 ./scripts/test-config.sh
 bash scripts/test-routing.sh
+node --test tests/ExtensionRegressionTests.cjs
 ```
 
 Auto-select supports separate profile and tab-group patterns. Older combined patterns
@@ -63,6 +64,19 @@ Before routing a link, the app focuses the chosen window and waits for its exten
 answer a PING. An enabled extension can still have a sleeping background worker, so an old
 snapshot is not proof that it is ready. Timed-out queued commands are discarded instead of
 being replayed after Safari has already received the fallback link.
+
+The macOS extension uses a Manifest V2 persistent background page. Safari suspended
+the former Manifest V3 worker even with a pending poll, and focusing a window did
+not reliably restart it. Optional tab-history loading no longer blocks the bridge.
+After installing this update, reload the extension in Safari Settings. A PING reply
+reports extension version `1.1.0` and background mode `persistent` to verify the
+running copy, rather than just the files installed on disk.
+
+This trades lower idle resource use for reliable routing: the extension background
+context stays loaded in each enabled profile and renews its local poll about every
+30 seconds. It does not pin ordinary webpages in memory or request that macOS stay
+awake. Memory and energy overhead, and recovery after system sleep, have not yet
+been measured.
 
 ## Agent access (MCP)
 

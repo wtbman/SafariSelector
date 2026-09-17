@@ -283,3 +283,35 @@ tests opened links in the previously failing window and a dormant second profile
 successful OPEN replies and no fallback. The disposable tabs were removed. The native UI
 inspection tool could read the picker and Safari but repeatedly failed to attach to the
 Settings window; its counts were checked against the app's live data instead.
+
+## Re-enabling MV3 did not restore sustained routing (2026-09-17)
+
+After re-enabling the extension, profiles posted snapshots and then stopped polling.
+The chosen window focused successfully, but repeated PINGs expired and the link took
+the normal Safari fallback. This was also observed for a profile that had opened
+links successfully earlier. Safari Settings showed the extension enabled in all
+profiles with unsigned extensions allowed, while Develop listed unloaded background
+content. A pending long poll and window focus are therefore not reliable lifecycle
+guarantees.
+
+The macOS-only extension now uses Manifest V2 with a persistent background script.
+Apple's [WWDC22 explanation](https://developer.apple.com/videos/play/wwdc2022/10099/)
+distinguishes continued MV2 support from MV3's nonpersistent requirement. The earlier
+blanket instruction to omit `persistent` was incorrect. Host access remains limited
+to the existing loopback pattern, moved into MV2's `permissions` array.
+
+Optional history loading no longer gates connection startup. Discovery and bridge
+requests have timeouts, HTTP failures enter the reconnect loop, and bridge responses
+and requests disable caching. PING reports version `1.1.0` and `backgroundMode:
+persistent` so an installed copy cannot be confused with the running copy.
+
+Validation: seven JavaScript lifecycle tests and nine Swift routing checks passed,
+and the app built and installed. Safari disabled the extension during replacement;
+after manual activation, all eight profiles answered PING with version 1.1.0 and
+persistent mode. They remained responsive across multiple idle poll cycles and
+cross-profile use. Full app tests selected the Personal window through the picker
+and Open Tickets through an existing routing rule; both completed in about 1.8
+seconds with successful OPEN replies and no fallback. An auto-selected third
+destination also succeeded. Actual tab locations matched the selected windows,
+and all three temporary tabs were removed. Longer-term sleep/wake reliability has
+not yet been measured.

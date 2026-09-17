@@ -20,7 +20,6 @@ import SwiftUI
 struct PreferencesView: View {
     @ObservedObject var config: Config
     @ObservedObject var store: TargetStore
-    let knownProfiles: () -> [String]
 
     @State private var profiles: [String] = []
 
@@ -31,7 +30,11 @@ struct PreferencesView: View {
             rulesTab.tabItem { Label("Rules", systemImage: "arrow.triangle.branch") }
         }
         .frame(minWidth: 640, idealWidth: 660, minHeight: 480, idealHeight: 720)
-        .onAppear { profiles = knownProfiles().sorted() }
+        .onReceive(store.$targets) { _ in
+            // AppDelegate starts one scan whenever Settings opens, including when
+            // reusing its window. Refresh profiles when that scan publishes results.
+            profiles = store.knownProfiles.sorted()
+        }
     }
 
     // MARK: - General
@@ -80,15 +83,37 @@ struct PreferencesView: View {
                         ), format: .number)
                             .frame(width: 46)
                             .disabled(config.stored.autoSelectSeconds == 0)
-                        Text("seconds, open in")
-                        TextField("Work*", text: $config.stored.autoSelectPattern)
-                            .frame(width: 190)
-                            .disabled(config.stored.autoSelectSeconds == 0)
+                        Text("seconds, open in the matching window")
                     }
-                    Text("Matched against \u{201C}profile — tab group\u{201D}, case-insensitively. Use * and ? as wildcards; text with no wildcard matches anywhere in the name. Deliberately text rather than a fixed window, so it keeps working as windows come and go.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if config.stored.legacyAutoSelectPattern != nil {
+                        HStack {
+                            Text("Existing pattern")
+                            TextField("Work* — Tickets*", text: Binding(
+                                get: { config.stored.legacyAutoSelectPattern ?? "" },
+                                set: { config.stored.legacyAutoSelectPattern = $0 }
+                            ))
+                            .disabled(config.stored.autoSelectSeconds == 0)
+                            Button("Use separate fields") {
+                                config.stored.legacyAutoSelectPattern = nil
+                            }
+                        }
+                        Text("Your existing pattern still matches the combined profile and tab-group name. Choose separate fields to replace it.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        HStack {
+                            Text("Profile")
+                            TextField("Work*", text: $config.stored.autoSelectProfilePattern)
+                            Text("Tab group")
+                            TextField("Tickets*", text: $config.stored.autoSelectGroupPattern)
+                        }
+                        .disabled(config.stored.autoSelectSeconds == 0)
+                        Text("Each field matches its own name, case-insensitively. Leave either blank to match any. Use * and ? as wildcards; text without wildcards matches anywhere in the name.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     Text(autoPreview)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(autoPreviewIsMatch ? .green : .orange)
@@ -168,7 +193,7 @@ struct PreferencesView: View {
     /// than ten seconds into a link opening somewhere unexpected.
     private var autoPreview: String {
         guard config.stored.autoSelectSeconds > 0 else { return " " }
-        guard !config.stored.autoSelectPattern.trimmingCharacters(in: .whitespaces).isEmpty else {
+        guard config.stored.hasAutoSelectPattern else {
             return "No pattern set — the picker will stay open."
         }
         if let t = config.autoSelectTarget(from: store.targets) {
@@ -219,7 +244,7 @@ struct PreferencesView: View {
                     .padding(.vertical, 2)
                 }
             }
-            Button("Refresh") { profiles = knownProfiles().sorted(); store.rebuild() }
+            Button("Refresh") { store.rebuild() }
         }
         .padding(14)
     }

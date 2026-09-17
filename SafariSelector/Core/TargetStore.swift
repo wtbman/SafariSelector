@@ -53,6 +53,12 @@ final class TargetStore: ObservableObject {
         rebuild()
     }
 
+    /// Profiles that have supplied a snapshot, including profiles with no windows.
+    var knownProfiles: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return Array(byProfile.keys)
+    }
+
     /// Raw per-profile window counts, before merging. Diagnostic only.
     var rawCounts: [String: Int] {
         lock.lock(); defer { lock.unlock() }

@@ -381,9 +381,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             existing.makeKeyAndOrderFront(nil)
             return
         }
-        let view = PreferencesView(config: config, store: store) { [weak self] in
-            self?.bridge.connectedProfiles ?? []
-        }
+        let view = PreferencesView(config: config, store: store)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 720),
                               // Resizable: the General tab grows as settings are added,
                               // and a fixed window silently clips them.

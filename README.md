@@ -40,6 +40,17 @@ Then install it:
 ./scripts/install.sh
 ```
 
+Run the settings and auto-select regression checks without launching Safari:
+
+```bash
+./scripts/test-config.sh
+```
+
+Auto-select supports separate profile and tab-group patterns. Older combined patterns
+keep their original behavior until you choose **Use separate fields** in Settings.
+Saved settings from older versions retain their aliases, rules, and history when newer
+settings are absent.
+
 ## Agent access (MCP)
 
 `mcp/` is an [MCP](https://modelcontextprotocol.io) server that lets an AI agent (Claude Code,

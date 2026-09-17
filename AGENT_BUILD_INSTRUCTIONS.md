@@ -109,14 +109,17 @@ time curl -s "http://127.0.0.1:53127/poll?profile=T"   # parks ~30s, then {"type
 
 ## Task 5 — Extension
 
-`manifest.json`: `permissions: [tabs, nativeMessaging, storage]`,
-`host_permissions: ["http://127.0.0.1/*"]`, `background.service_worker`. Omit `persistent` —
-Safari does not support it.
+`manifest.json`: Manifest V2, `permissions: [tabs, nativeMessaging, storage,
+"http://127.0.0.1/*"]`, `background.scripts: ["background.js"]`, `persistent: true`.
+This is macOS-only. The earlier claim that Safari does not support persistent
+background pages was incorrect; MV3 requires nonpersistent backgrounds, but macOS
+Safari supports persistent pages with MV2.
 
 `background.js`: discover via `sendNativeMessage` → long-poll → push a **lightweight** snapshot
 (`windowId, focused, tabCount, activeTabUrl, activeTabTitle`) on window/tab events. Windows here
 routinely hold 200+ tabs; never send the full tab array. Reconnect with capped exponential
-backoff and re-discover on every failure — MV3 workers are killed aggressively.
+backoff and re-discover on every failure. Optional tab-history initialization must
+not gate bridge startup. Bound discovery and bridge requests, and disable caching.
 
 `SafariWebExtensionHandler`: return `{port, profileUUID}` from `SFExtensionProfileKey`.
 

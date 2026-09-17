@@ -16,8 +16,8 @@ import os.log
 ///
 /// HTTP long-polling rather than a WebSocket: the capability spike verified that
 /// `fetch()` to `http://127.0.0.1` works from a Safari extension, `ws://` was never
-/// verified, and an in-flight fetch has the useful side effect of keeping the MV3
-/// background worker alive.
+/// verified. The macOS extension uses a persistent background page; a pending
+/// fetch alone did not reliably keep Safari's MV3 worker alive.
 ///
 /// Routes:
 ///   POST /snapshot  — an instance reports its windows
@@ -322,6 +322,7 @@ final class BridgeServer {
         var head = "HTTP/1.1 \(status) \(status == 200 ? "OK" : "")\r\n"
         head += "Content-Type: application/json\r\n"
         head += "Content-Length: \(body.count)\r\n"
+        head += "Cache-Control: no-store\r\n"
         head += "Access-Control-Allow-Origin: *\r\n"
         head += "Access-Control-Allow-Headers: Content-Type\r\n"
         head += "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"

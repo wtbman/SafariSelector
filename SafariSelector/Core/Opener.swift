@@ -23,7 +23,7 @@ final class Opener {
     private let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "opener")
 
     /// Called when a link had to go to Safari directly because the extension is not
-    /// running. The link has already been opened by then; this is for telling the
+    /// responding. The link has already been opened by then; this is for telling the
     /// user, not for retrying. Always on the main queue.
     var onExtensionUnavailable: (() -> Void)?
 
@@ -42,29 +42,23 @@ final class Opener {
             reportExtensionUnavailable()
             return
         }
-        let match = target.bounds.map {
+        let match = warm.bounds.map {
             (left: $0.left, top: $0.top, width: $0.width, height: $0.height)
         }
-        let command = Bridge.Command.open(windowId: warm.windowId, url: url.absoluteString,
-                                          match: match)
-        // Focus the intended window first. This keeps the extension's fallback
-        // correct if the window id has gone stale, and matches what the user just
-        // picked: the tab lands in the window they are looking at.
-        if let scriptID = target.appleScriptWindowID {
-            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                AppleScriptProbe.queue.async {
-                    AppleScriptProbe.focus(windowID: scriptID)
-                    c.resume()
-                }
-            }
+        guard let profile = warm.profileUUID, let windowID = warm.windowId else {
+            openInSafariDirectly(url)
+            reportExtensionUnavailable()
+            return
         }
-        DebugLog.write("sending OPEN windowId=\(warm.windowId) profile=\(warm.profileUUID)")
-        let result = await bridge.send(command, to: warm.profileUUID)
+        let command = Bridge.Command.open(windowId: windowID, url: url.absoluteString,
+                                          match: match)
+        DebugLog.write("sending OPEN windowId=\(windowID) profile=\(profile)")
+        let result = await bridge.send(command, to: profile)
         DebugLog.write("OPEN result: ok=\(result?.ok ?? false) err=\(result?.error ?? "-") fallback=\(result?.usedFallback ?? false)")
         guard let result, result.ok else {
             log.error("open failed: \(result?.error ?? "no response", privacy: .public)")
             openInSafariDirectly(url)
-            // No answer at all means the worker is gone; an error means it is there
+            // No answer means the worker is unresponsive; an error means it is there
             // and something else went wrong, which is not the extension being off.
             if result == nil { reportExtensionUnavailable() }
             return
@@ -83,11 +77,13 @@ final class Opener {
     /// Focusing that window fires `windows.onFocusChanged` inside its profile, which
     /// starts the worker; it then connects and reports its windows, and the window we
     /// want appears, paired by geometry like every other window.
-    private func resolve(_ target: SafariTarget) async -> (profileUUID: String, windowId: Int)? {
-        if let p = target.profileUUID, let w = target.windowId { return (p, w) }
+    private func resolve(_ target: SafariTarget) async -> SafariTarget? {
         guard let scriptID = target.appleScriptWindowID else { return nil }
 
-        DebugLog.write("waking cold profile by focusing AppleScript window \(scriptID)")
+        // A snapshot only identifies a window; its worker may have gone to sleep
+        // since then. Focus every target and require a fresh round trip before
+        // handing it a side-effecting command. Never retry OPEN itself.
+        DebugLog.write("checking target by focusing AppleScript window \(scriptID)")
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             AppleScriptProbe.queue.async {
                 AppleScriptProbe.focus(windowID: scriptID)
@@ -95,28 +91,32 @@ final class Opener {
             }
         }
 
-        // Waking normally takes one attempt (~700ms). Keep trying for ten seconds
-        // when some profile is talking to us, since Safari can be slow to start a
-        // worker; but when *nothing* has connected since this process started, the
-        // extension is almost certainly not running at all — after a reinstall, or
-        // with "Allow unsigned extensions" reset — and a long wait just delays the
-        // fallback and makes the app look hung.
-        let attempts = bridge.connectedProfiles.isEmpty ? 8 : 40
+        let deadline = Date().addingTimeInterval(10)
 
         // Re-derive both views on each attempt and match on the AppleScript window
         // id, which is stable within a Safari session.
-        for attempt in 0..<attempts {
+        while Date() < deadline {
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
                 store.rebuild { c.resume() }
             }
             if let t = store.targets.first(where: { $0.appleScriptWindowID == scriptID }),
-               let p = t.profileUUID, let w = t.windowId {
-                DebugLog.write("woke after \(attempt) attempts: profile=\(p) windowId=\(w)")
-                return (p, w)
+               let p = t.profileUUID, t.windowId != nil {
+                let ping = await bridge.send(.relay(type: "PING", args: nil), to: p, timeout: 1)
+                if ping?.ok == true {
+                    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                        store.rebuild { c.resume() }
+                    }
+                    if let current = store.targets.first(where: {
+                        $0.appleScriptWindowID == scriptID && $0.profileUUID == p && $0.isWarm
+                    }) {
+                        DebugLog.write("target responded: profile=\(p) windowId=\(current.windowId!)")
+                        return current
+                    }
+                }
             }
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
-        DebugLog.write("profile did not wake for AppleScript window \(scriptID)")
+        DebugLog.write("profile did not respond for AppleScript window \(scriptID)")
         log.warning("profile did not wake for window \(scriptID)")
         return nil
     }

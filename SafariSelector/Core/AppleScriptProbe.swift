@@ -91,10 +91,17 @@ enum AppleScriptProbe {
 
     static func windows() -> [Window] {
         guard let output = run(listScript) else { return [] }
+        return parseWindows(output)
+    }
+
+    static func parseWindows(_ output: String) -> [Window] {
         var result: [Window] = []
         for line in output.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false)
-            guard f.count >= 6, let wid = Int(f[0]) else { continue }
+            // Safari also exposes auxiliary/stale windows with no tabs. They
+            // cannot receive a tab through the extension and are not destinations.
+            guard f.count >= 6, let wid = Int(f[0]), let tabCount = Int(f[4]),
+                  tabCount > 0 else { continue }
             let name = String(f[1])
             let prefix = name.components(separatedBy: separator).first
             // AppleScript reports {left, top, right, bottom}.
@@ -105,7 +112,7 @@ enum AppleScriptProbe {
                 prefix: (prefix?.isEmpty == false && prefix != name) ? prefix : nil,
                 activeTabURL: String(f[2]),
                 activeTabTitle: String(f[3]),
-                tabCount: Int(f[4]) ?? 0,
+                tabCount: tabCount,
                 bounds: Bounds(left: b[0], top: b[1], width: b[2] - b[0], height: b[3] - b[1])
             ))
         }

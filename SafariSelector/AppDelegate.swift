@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var extensionStatusItem: NSMenuItem?
     /// Whether the user has already been told about the current outage. One alert
     /// per outage: a burst of links must not produce a burst of dialogs. Cleared
-    /// when any profile reports in again.
+    /// when a command gets a response again.
     private var extensionOutageReported = false
 
     /// This app is the system's default browser. It must never route to itself.
@@ -53,9 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         bridge.onSnapshot = { [weak self] profile, windows in
             self?.store.update(profileUUID: profile, windows: windows)
+        }
+        bridge.onResponse = { [weak self] in
             DispatchQueue.main.async { self?.extensionRecovered() }
         }
-        bridge.statusProvider = { [weak self] connected in
+        bridge.statusProvider = { [weak self] connected, activity in
             guard let self else { return Data("[]".utf8) }
             // Wait for a fresh AppleScript pass (bounded) so a window opened a
             // moment ago is in the answer rather than the next one. This runs on
@@ -78,6 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let payload: [String: Any] = [
                 "connectedProfiles": connected,
+                "knownProfiles": self.store.knownProfiles.sorted(),
+                "profileActivity": activity,
                 "rawWindowCounts": self.store.rawCounts,
                 "rawWindows": self.store.rawWindows,
                 "targets": rows,
@@ -91,13 +95,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         opener = Opener(bridge: bridge, store: store)
         opener.onExtensionUnavailable = { [weak self] in self?.extensionUnavailable() }
         setUpStatusItem()
+        if preferencesRequestedAtLaunch { showPreferences() }
     }
 
     // MARK: - Extension outage
 
     /// The link has already gone to Safari's frontmost window by the time this is
     /// called. What the user needs now is to know why, and the shortest route to
-    /// fixing it — which is a switch in Safari's settings, not anything here.
+    /// recovering it. An enabled extension can still have an unresponsive worker.
     private func extensionUnavailable() {
         extensionStatusItem?.isHidden = false
         guard !extensionOutageReported else { return }
@@ -106,11 +111,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "SafariSelector's extension isn't running"
+        alert.messageText = "SafariSelector couldn't reach the selected profile"
         alert.informativeText = """
         The link was opened in Safari's frontmost window instead of the one you chose.
 
-        Safari stops the extension when the app is reinstalled or when \u{201C}Allow unsigned extensions\u{201D} is reset, and doesn't start it again by itself. To restart it:
+        The extension did not respond in time. It can be enabled while its background worker is asleep or disconnected. Bring the intended Safari window forward and try again.
+
+        If the problem continues, restart the extension:
 
         1. Safari › Settings › Extensions
         2. Untick SafariSelector, then tick it again
@@ -290,6 +297,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        let settings = NSMenuItem(title: "Settings…", action: #selector(showPreferences),
+                                  keyEquivalent: ",")
+        settings.target = self
+        appMenu.addItem(settings)
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit SafariSelector",
                                    action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
@@ -317,9 +329,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "SafariSelector", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
-        let status = NSMenuItem(title: "Connected profiles: —", action: nil, keyEquivalent: "")
+        let status = NSMenuItem(title: "Recently active profiles: —", action: nil, keyEquivalent: "")
         menu.addItem(status)
-        let outage = NSMenuItem(title: "⚠︎ Extension not running — toggle it in Safari › Settings › Extensions",
+        let outage = NSMenuItem(title: "⚠︎ Profile did not respond — check Safari extension",
                                 action: #selector(openExtensionSettings), keyEquivalent: "")
         outage.isHidden = true
         menu.addItem(outage)
@@ -342,7 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             guard let self else { return }
             let n = self.bridge.connectedProfiles.count
-            status.title = "Connected profiles: \(n)"
+            status.title = "Recently active profiles: \(n)"
         }
     }
 
@@ -373,17 +385,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var preferencesWindow: NSWindow?
+    private var preferencesRequestedAtLaunch = false
+
+    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        showPreferences()
+        return true
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showPreferences()
+        return false
+    }
 
     @objc private func showPreferences() {
+        // macOS can ask for an untitled window before launch has initialized
+        // the store. Defer that request until applicationDidFinishLaunching.
+        guard store != nil else {
+            preferencesRequestedAtLaunch = true
+            return
+        }
+        preferencesRequestedAtLaunch = false
         store.rebuild()
         if let existing = preferencesWindow {
             NSApp.activate(ignoringOtherApps: true)
             existing.makeKeyAndOrderFront(nil)
             return
         }
-        let view = PreferencesView(config: config, store: store) { [weak self] in
-            self?.bridge.connectedProfiles ?? []
-        }
+        let view = PreferencesView(config: config, store: store)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 720),
                               // Resizable: the General tab grows as settings are added,
                               // and a fixed window silently clips them.

@@ -241,3 +241,45 @@ launching and re-ticks the menu item through Accessibility, reading
 the running app reported `.regular` and had a Dock tile. Re-asserting it in
 `applicationDidFinishLaunching` holds. Note that `LSUIElement` in Info.plist is not an option here:
 it also removes the app from the default-browser list.
+
+## Profile naming hints and a possible database lookup (2026-09-16)
+
+Settings now shows up to four distinct tab-group hints for unnamed profiles: the focused
+window's label first, then other open windows and remembered group ownership. These are
+clues, not inferred profile names; the window-title ambiguity described above still applies.
+
+There is a possible alternative beyond the extension and AppleScript APIs. The
+[mac_apt Safari parser](https://github.com/ydkhatri/mac_apt/blob/master/plugins/safari.py)
+reads profile records from `SafariTabs.db` (`bookmarks`, `parent = 0`, `type = 1`,
+`subtype = 2`). It uses `title` for the name, `external_uuid` for the disk profile UUID,
+and `server_id` for the extension UUID. Those identifiers must not be assumed identical.
+
+The database exists here at
+`~/Library/Containers/com.apple.Safari/Data/Library/Safari/SafariTabs.db`, but a read-only
+probe was denied by macOS with `Operation not permitted`, including outside the command
+sandbox. No database contents or UUID mapping could be validated, and no privacy settings
+were changed. The hints use the app's existing window snapshots and learned labels.
+
+## Enabled extensions can still be unresponsive (2026-09-16)
+
+The live audit confirmed both SafariSelector and Allow Unsigned Extensions were enabled,
+while Safari's Develop menu listed the profile workers as not loaded. Previously received
+snapshots remained in memory and made those profiles look connected. A read-only PING
+timed out until the affected window was brought forward, then completed in about 40 ms.
+
+Opening now focuses the chosen window, waits for a successful PING, and resolves its
+current extension window ID before sending OPEN once. The bridge removes expired queued
+commands and disconnected long polls. A timeout message describes an unresponsive profile
+instead of asserting that the extension is disabled. Snapshot arrival alone does not
+clear an outage.
+
+Settings retains saved profile names across app restarts and counts the same browsing
+windows used by the picker, including profiles identified from previous observations.
+Zero-tab auxiliary windows are excluded; real Start Page tabs remain selectable. Saved
+Safari profiles, observed profile UUIDs, and currently open windows are separate inventories.
+
+Validation: 50 configuration checks and nine isolated routing checks passed. Live picker
+tests opened links in the previously failing window and a dormant second profile with
+successful OPEN replies and no fallback. The disposable tabs were removed. The native UI
+inspection tool could read the picker and Safari but repeatedly failed to attach to the
+Settings window; its counts were checked against the app's live data instead.

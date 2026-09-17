@@ -110,10 +110,17 @@ in `Opener` ends at `openInSafariDirectly`.
 ## Auto-select
 
 If the picker sits untouched for a configurable number of seconds, it can choose a window on its
-own. The target is expressed as **text matched against "profile — tab group"**, not as a stored
-window: WebExtension window ids are reassigned constantly and even profile UUIDs are opaque, but
-`Work*` keeps meaning what you meant. Matching is a case-insensitive glob (`*`, `?`); a pattern
+own. Separate text patterns match the **profile** and **tab group** independently; leaving one
+blank matches any name for that part. Both blank disables selection. These are not stored window
+identifiers: WebExtension window ids are reassigned constantly and even profile UUIDs are opaque,
+but `Work*` keeps meaning what you meant. Matching is a case-insensitive glob (`*`, `?`); a pattern
 with no wildcard is a substring search.
+
+Older combined patterns continue matching "profile — tab group" exactly as before, including
+wildcards spanning the separator and substrings that match either half. Settings shows the
+existing pattern until the user chooses **Use separate fields** to replace it. Guessing which
+half an old pattern refers to would change routing behavior. Older settings files also receive
+defaults for absent fields, preserving existing aliases, rules, and history.
 
 If the pattern matches nothing, the picker stays open rather than guessing — opening a link
 somewhere arbitrary is worse than waiting. Settings previews the current match live, so a typo is

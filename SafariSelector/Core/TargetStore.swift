@@ -53,6 +53,24 @@ final class TargetStore: ObservableObject {
         rebuild()
     }
 
+    /// Saved profiles remain editable even when Safari has not run their worker
+    /// this session. This is a catalog, not a claim that a worker is connected.
+    var knownProfiles: [String] {
+        lock.lock()
+        let reported = Set(byProfile.keys)
+        lock.unlock()
+        return Array(reported.union(config.stored.profileAliases.keys)
+            .union(config.stored.groupToProfile.values))
+    }
+
+    func owningProfile(of target: SafariTarget) -> String? {
+        target.profileUUID ?? target.tabGroupLabel.flatMap { config.profileOwning(group: $0) }
+    }
+
+    func windowCount(for uuid: String) -> Int {
+        targets.filter { owningProfile(of: $0) == uuid }.count
+    }
+
     /// Raw per-profile window counts, before merging. Diagnostic only.
     var rawCounts: [String: Int] {
         lock.lock(); defer { lock.unlock() }

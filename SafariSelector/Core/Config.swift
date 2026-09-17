@@ -70,27 +70,81 @@ final class Config: ObservableObject {
 
         /// Auto-select a target if the picker sits untouched this long. Zero is off.
         var autoSelectSeconds: Int = 0
-        /// Which target auto-select lands on, as a wildcard matched against
-        /// "profile — tab group". Deliberately text rather than an id: window ids and
-        /// even profile UUIDs change, but "Work*" keeps meaning what you meant.
-        var autoSelectPattern: String = ""
+        /// Which target auto-select lands on: two separate wildcards, matched against
+        /// the profile name and the tab group name independently. Deliberately text
+        /// rather than an id: window ids and even profile UUIDs change, but "Work*"
+        /// keeps meaning what you meant. Separate fields (rather than one pattern
+        /// glued together with a separator) so "Personal" the profile and "Personal"
+        /// the tab group can't be confused for one another, and so nothing needs an
+        /// em dash typed into a text field.
+        var autoSelectProfilePattern: String = ""
+        var autoSelectGroupPattern: String = ""
+        /// Older patterns can match either half or span the separator. Retain their
+        /// exact semantics until the user chooses to replace them with separate fields.
+        var legacyAutoSelectPattern: String?
+
+        var hasAutoSelectPattern: Bool {
+            [legacyAutoSelectPattern ?? "", autoSelectProfilePattern, autoSelectGroupPattern]
+                .contains { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        }
 
         /// Re-enable Safari's "Allow Unsigned Extensions" when it resets. Off by
         /// default: it drives Safari's menus through Accessibility, which the user
         /// should opt into knowingly.
         var autoAllowUnsignedExtensions: Bool = false
+
+        init() {}
+
+        /// Missing fields in older settings must use defaults instead of rejecting
+        /// the entire file and losing aliases, routing rules, and choice history.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            profileAliases = try c.decodeIfPresent([String: String].self, forKey: .profileAliases) ?? [:]
+            rules = try c.decodeIfPresent([Rule].self, forKey: .rules) ?? []
+            groupToProfile = try c.decodeIfPresent([String: String].self, forKey: .groupToProfile) ?? [:]
+            lastChoiceByHost = try c.decodeIfPresent([String: String].self, forKey: .lastChoiceByHost) ?? [:]
+            lastChoice = try c.decodeIfPresent(String.self, forKey: .lastChoice)
+            autoSelectSeconds = try c.decodeIfPresent(Int.self, forKey: .autoSelectSeconds) ?? 0
+            autoSelectProfilePattern = try c.decodeIfPresent(String.self, forKey: .autoSelectProfilePattern) ?? ""
+            autoSelectGroupPattern = try c.decodeIfPresent(String.self, forKey: .autoSelectGroupPattern) ?? ""
+            autoAllowUnsignedExtensions = try c.decodeIfPresent(Bool.self, forKey: .autoAllowUnsignedExtensions) ?? false
+            if autoSelectProfilePattern.trimmingCharacters(in: .whitespaces).isEmpty,
+               autoSelectGroupPattern.trimmingCharacters(in: .whitespaces).isEmpty,
+               let legacy = try c.decodeIfPresent(String.self, forKey: .legacyAutoSelectPattern),
+               !legacy.trimmingCharacters(in: .whitespaces).isEmpty {
+                legacyAutoSelectPattern = legacy
+            }
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case profileAliases, rules, groupToProfile, lastChoiceByHost, lastChoice,
+                 autoSelectSeconds, autoSelectProfilePattern, autoSelectGroupPattern,
+                 autoAllowUnsignedExtensions
+            case legacyAutoSelectPattern = "autoSelectPattern"
+        }
     }
 
-    /// Best target for the auto-select pattern, or nil if nothing matches.
+    /// Best target for the auto-select patterns, or nil if nothing matches.
     ///
-    /// Matching is a case-insensitive glob over "profile — tab group", preferring the
-    /// tightest match so "Open*" beats a looser candidate. Never guesses when the
-    /// pattern matches nothing: silently opening somewhere arbitrary is worse than
-    /// leaving the picker up.
+    /// The profile and tab-group patterns are matched independently, case-
+    /// insensitively; an empty pattern matches anything for that half. Among
+    /// matches, prefers the tightest so "Open*" beats a looser candidate. Never
+    /// guesses when nothing matches: silently opening somewhere arbitrary is worse
+    /// than leaving the picker up.
     func autoSelectTarget(from targets: [SafariTarget]) -> SafariTarget? {
-        let pattern = stored.autoSelectPattern.trimmingCharacters(in: .whitespaces)
-        guard !pattern.isEmpty else { return nil }
-        let matches = targets.filter { Config.glob(pattern, matches: $0.matchHaystack) }
+        if let legacy = stored.legacyAutoSelectPattern {
+            let pattern = legacy.trimmingCharacters(in: .whitespaces)
+            guard !pattern.isEmpty else { return nil }
+            return targets.filter { Config.glob(pattern, matches: $0.matchHaystack) }
+                .min { $0.matchHaystack.count < $1.matchHaystack.count }
+        }
+        let profilePattern = stored.autoSelectProfilePattern.trimmingCharacters(in: .whitespaces)
+        let groupPattern = stored.autoSelectGroupPattern.trimmingCharacters(in: .whitespaces)
+        guard !profilePattern.isEmpty || !groupPattern.isEmpty else { return nil }
+        let matches = targets.filter {
+            (profilePattern.isEmpty || Config.glob(profilePattern, matches: $0.profileLabel))
+            && (groupPattern.isEmpty || Config.glob(groupPattern, matches: $0.tabGroupLabel ?? "loose tabs"))
+        }
         return matches.min { $0.matchHaystack.count < $1.matchHaystack.count }
     }
 
@@ -132,6 +186,34 @@ final class Config: ObservableObject {
 
     func profileLabel(for uuid: String) -> String? {
         stored.profileAliases[uuid]
+    }
+
+    /// Naming clues only: window-title prefixes can also describe loose tabs, and
+    /// remembered groups may no longer be open. Never infer a profile name from them.
+    func profileNamingHints(for uuid: String, targets: [SafariTarget]) -> [String] {
+        let live = targets.filter { target in
+            if let owner = target.profileUUID { return owner == uuid }
+            return target.tabGroupLabel.flatMap { stored.groupToProfile[$0] } == uuid
+        }.sorted {
+            if $0.isFocused != $1.isFocused { return $0.isFocused }
+            // Confirmed open windows precede inferred ownership for dormant ones.
+            if $0.isWarm != $1.isWarm { return $0.isWarm }
+            return ($0.tabGroupLabel ?? "") < ($1.tabGroupLabel ?? "")
+        }
+        let remembered = stored.groupToProfile
+            .filter { $0.value == uuid }
+            .map(\.key)
+            .sorted()
+
+        var seen = Set<String>()
+        var hints: [String] = []
+        for label in live.compactMap(\.tabGroupLabel) + remembered {
+            let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, seen.insert(name).inserted else { continue }
+            hints.append(name)
+            if hints.count == 4 { break }
+        }
+        return hints
     }
 
     func learn(group: String, belongsTo profileUUID: String) {

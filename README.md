@@ -44,12 +44,25 @@ Run the settings and auto-select regression checks without launching Safari:
 
 ```bash
 ./scripts/test-config.sh
+bash scripts/test-routing.sh
 ```
 
 Auto-select supports separate profile and tab-group patterns. Older combined patterns
 keep their original behavior until you choose **Use separate fields** in Settings.
 Saved settings from older versions retain their aliases, rules, and history when newer
 settings are absent.
+
+Settings → Profiles shows up to four tab-group hints beneath each unnamed profile's UUID.
+The focused window's group comes first, followed by other open groups and previously seen
+groups, without duplicates. These are naming clues from Safari window titles, which can
+also contain a profile name; they disappear once you name the profile.
+
+Saved profiles remain in Settings across restarts. Window counts and the link picker include
+only open browsing windows; saved tab groups without an open window are not destinations.
+Before routing a link, the app focuses the chosen window and waits for its extension to
+answer a PING. An enabled extension can still have a sleeping background worker, so an old
+snapshot is not proof that it is ready. Timed-out queued commands are discarded instead of
+being replayed after Safari has already received the fallback link.
 
 ## Agent access (MCP)
 

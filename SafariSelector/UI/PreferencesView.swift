@@ -212,9 +212,9 @@ struct PreferencesView: View {
     private var profilesTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Name each Safari profile. Safari identifies profiles only by UUID, so these names are yours to set.")
+                Text("Name each Safari profile. Use the tab group hints to recognize profiles you haven't named yet.")
                     .font(.system(size: 16))
-                Text("A profile only appears here once Safari has run its extension in that profile. Safari starts an extension\u{2019}s background worker on activity, so after this app or Safari restarts, click a window in each profile, then press Refresh. Profiles missing from this list still show up in the picker — they are woken automatically when you pick one.")
+                Text("Saved profiles stay listed even when their windows are closed or their extension is asleep. Counts show open browsing windows, including previously identified profiles. To discover a missing profile, open one of its Safari windows and press Refresh. The link picker lists open windows, not every saved tab group.")
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -222,24 +222,30 @@ struct PreferencesView: View {
 
             if profiles.isEmpty {
                 ContentUnavailableView(
-                    "No profiles connected",
+                    "No profiles discovered",
                     systemImage: "puzzlepiece.extension",
                     description: Text("Enable the SafariSelector extension in Safari Settings → Extensions, then click a window in each profile.")
                 )
             } else {
                 List(profiles, id: \.self) { uuid in
-                    HStack {
+                    HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
                             TextField("Profile name", text: binding(for: uuid))
                                 .textFieldStyle(.roundedBorder)
                             Text(uuid)
                                 .font(.system(size: 13, design: .monospaced))
                                 .foregroundStyle(.secondary)
+                            if (config.profileLabel(for: uuid) ?? "")
+                                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                profileHints(uuid)
+                            }
                         }
                         Spacer()
                         Text(windowSummary(uuid))
                             .font(.system(size: 16))
                             .foregroundStyle(.secondary)
+                            .fixedSize()
+                            .padding(.top, 3)
                     }
                     .padding(.vertical, 2)
                 }
@@ -247,6 +253,28 @@ struct PreferencesView: View {
             Button("Refresh") { store.rebuild() }
         }
         .padding(14)
+    }
+
+    private func profileHints(_ uuid: String) -> some View {
+        let hints = config.profileNamingHints(for: uuid, targets: store.targets)
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("Tab group hints")
+                .font(.system(size: 12, weight: .medium))
+            if hints.isEmpty {
+                Text("No hints yet. Show a tab group in this profile, then press Refresh.")
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(hints, id: \.self) { name in
+                    Text("• \(name)")
+                        .lineLimit(1)
+                        .help(name)
+                }
+            }
+        }
+        .font(.system(size: 13))
+        .foregroundStyle(.secondary)
+        .padding(.top, 4)
+        .help("Up to four tab groups from open windows or previously seen in this profile. The focused window's group comes first when available. Safari window titles can also show the profile name.")
     }
 
     private func binding(for uuid: String) -> Binding<String> {
@@ -257,8 +285,8 @@ struct PreferencesView: View {
     }
 
     private func windowSummary(_ uuid: String) -> String {
-        let n = store.targets.filter { $0.profileUUID == uuid }.count
-        return n == 1 ? "1 window" : "\(n) windows"
+        let n = store.windowCount(for: uuid)
+        return n == 1 ? "1 open window" : "\(n) open windows"
     }
 
     // MARK: - Rules

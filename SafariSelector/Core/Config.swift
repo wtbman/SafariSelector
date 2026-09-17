@@ -188,6 +188,34 @@ final class Config: ObservableObject {
         stored.profileAliases[uuid]
     }
 
+    /// Naming clues only: window-title prefixes can also describe loose tabs, and
+    /// remembered groups may no longer be open. Never infer a profile name from them.
+    func profileNamingHints(for uuid: String, targets: [SafariTarget]) -> [String] {
+        let live = targets.filter { target in
+            if let owner = target.profileUUID { return owner == uuid }
+            return target.tabGroupLabel.flatMap { stored.groupToProfile[$0] } == uuid
+        }.sorted {
+            if $0.isFocused != $1.isFocused { return $0.isFocused }
+            // Confirmed open windows precede inferred ownership for dormant ones.
+            if $0.isWarm != $1.isWarm { return $0.isWarm }
+            return ($0.tabGroupLabel ?? "") < ($1.tabGroupLabel ?? "")
+        }
+        let remembered = stored.groupToProfile
+            .filter { $0.value == uuid }
+            .map(\.key)
+            .sorted()
+
+        var seen = Set<String>()
+        var hints: [String] = []
+        for label in live.compactMap(\.tabGroupLabel) + remembered {
+            let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, seen.insert(name).inserted else { continue }
+            hints.append(name)
+            if hints.count == 4 { break }
+        }
+        return hints
+    }
+
     func learn(group: String, belongsTo profileUUID: String) {
         guard stored.groupToProfile[group] != profileUUID else { return }
         stored.groupToProfile[group] = profileUUID

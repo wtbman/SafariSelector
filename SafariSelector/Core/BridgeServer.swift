@@ -42,6 +42,9 @@ final class BridgeServer {
     /// between one poll returning and the next arriving, which is why commands are
     /// queued rather than requiring a live waiter.
     private var waiters: [String: (Bridge.Command) -> Void] = [:]
+    private var waiterIDs: [String: UUID] = [:]
+    private var lastPolls: [String: Date] = [:]
+    private var lastSnapshots: [String: Date] = [:]
     /// Commands waiting for their profile's next poll.
     private var queued: [String: [Bridge.Command]] = [:]
     /// Every profile that has ever polled or pushed, whether or not it is mid-poll.
@@ -50,13 +53,14 @@ final class BridgeServer {
     private var pending: [String: (Bridge.CommandResult) -> Void] = [:]
 
     var onSnapshot: ((String, [Bridge.WindowInfo]) -> Void)?
+    var onResponse: (() -> Void)?
     /// Supplies the merged target list for the status endpoint. Receives the
     /// connected profile list as an argument: it is invoked while already on the
     /// bridge queue, so it must never call back into a queue-synchronised property.
-    var statusProvider: (([String]) -> Data)?
+    var statusProvider: (([String], [[String: Any]]) -> Data)?
 
-    init() throws {
-        token = BridgeServer.loadOrCreateToken()
+    init(port: UInt16 = BridgeServer.port, token: String? = nil) throws {
+        self.token = token ?? BridgeServer.loadOrCreateToken()
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         // Bind loopback only: nothing outside this machine should reach the bridge.
@@ -64,7 +68,7 @@ final class BridgeServer {
             tcp.version = .v4
         }
         params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback),
-                                                 port: .init(rawValue: BridgeServer.port)!)
+                                                 port: .init(rawValue: port)!)
         listener = try NWListener(using: params)
     }
 
@@ -108,11 +112,16 @@ final class BridgeServer {
                     guard !settled else { return }
                     settled = true
                     self.pending.removeValue(forKey: command.commandId)
+                    // A timed-out OPEN must never execute when the profile wakes
+                    // later, after the caller has already used Safari's fallback.
+                    self.queued[profileUUID]?.removeAll { $0.commandId == command.commandId }
+                    DebugLog.write("bridge timeout type=\(command.type) profile=\(profileUUID)")
                     continuation.resume(returning: nil)
                 }
                 // Hand it to a parked poll if there is one, otherwise queue it for
                 // the next poll. A profile between polls is not a dead profile.
                 if let waiter = self.waiters.removeValue(forKey: profileUUID) {
+                    self.waiterIDs.removeValue(forKey: profileUUID)
                     waiter(command)
                 } else {
                     self.queued[profileUUID, default: []].append(command)
@@ -121,10 +130,25 @@ final class BridgeServer {
         }
     }
 
-    /// Profiles that have made contact. Deliberately not "profiles currently parked
-    /// on a poll" — that set flickers empty between polls.
+    /// Recent command polls, not the lifetime set of profiles ever seen. A recent
+    /// poll still is not a readiness guarantee: the opener verifies with PING.
     var connectedProfiles: [String] {
-        queue.sync { Array(knownProfiles) }
+        queue.sync { recentProfiles }
+    }
+
+    private var recentProfiles: [String] {
+        lastPolls.filter { Date().timeIntervalSince($0.value) < 35 }.map(\.key)
+    }
+
+    private var profileActivity: [[String: Any]] {
+        knownProfiles.sorted().map { profile in
+            var row: [String: Any] = ["profileUUID": profile,
+                                     "waitingForCommand": waiters[profile] != nil,
+                                     "queuedCommands": queued[profile]?.count ?? 0]
+            if let time = lastPolls[profile] { row["lastPollAgeSeconds"] = Date().timeIntervalSince(time) }
+            if let time = lastSnapshots[profile] { row["lastSnapshotAgeSeconds"] = Date().timeIntervalSince(time) }
+            return row
+        }
     }
 
     // MARK: - Connection handling
@@ -172,6 +196,7 @@ final class BridgeServer {
             guard let snap = try? JSONDecoder().decode(Bridge.Snapshot.self, from: body),
                   authorised(snap.token) else { respond(conn, status: 403, json: nil); return }
             knownProfiles.insert(snap.profileUUID)
+            lastSnapshots[snap.profileUUID] = Date()
             onSnapshot?(snap.profileUUID, snap.windows)
             respond(conn, status: 200, json: ["ok": true])
 
@@ -184,7 +209,10 @@ final class BridgeServer {
         case ("POST", "/result"):
             guard let env = try? JSONDecoder().decode(Bridge.ResultEnvelope.self, from: body),
                   authorised(env.token) else { respond(conn, status: 403, json: nil); return }
-            if let cb = pending.removeValue(forKey: env.commandId) { cb(env.result) }
+            if let cb = pending.removeValue(forKey: env.commandId) {
+                cb(env.result)
+                onResponse?()
+            }
             respond(conn, status: 200, json: ["ok": true])
 
         case ("POST", "/command"):
@@ -209,7 +237,7 @@ final class BridgeServer {
 
         case ("GET", "/status"):
             // Read-only introspection: what the app currently believes is openable.
-            let body = statusProvider?(Array(knownProfiles)) ?? Data("[]".utf8)
+            let body = statusProvider?(recentProfiles, profileActivity) ?? Data("[]".utf8)
             write(conn, status: 200, body: body)
 
         default:
@@ -222,6 +250,9 @@ final class BridgeServer {
     /// ever has one live instance, and a stale parked connection must not win.
     private func park(_ conn: NWConnection, profile: String) {
         knownProfiles.insert(profile)
+        lastPolls[profile] = Date()
+        waiters.removeValue(forKey: profile)?(Bridge.Command.idle)
+        waiterIDs.removeValue(forKey: profile)
         // Anything queued while this profile was between polls goes out immediately.
         if var pendingForProfile = queued[profile], !pendingForProfile.isEmpty {
             let next = pendingForProfile.removeFirst()
@@ -229,17 +260,38 @@ final class BridgeServer {
             respond(conn, status: 200, jsonEncodable: next)
             return
         }
-        waiters[profile]?(Bridge.Command.idle)
         var answered = false
+        let waiterID = UUID()
+        let removeWaiter = { [weak self] in
+            guard let self, self.waiterIDs[profile] == waiterID else { return }
+            self.waiters.removeValue(forKey: profile)
+            self.waiterIDs.removeValue(forKey: profile)
+        }
         let reply: (Bridge.Command) -> Void = { [weak self] cmd in
             guard let self, !answered else { return }
             answered = true
-            self.respond(conn, status: 200, jsonEncodable: cmd)
+            removeWaiter()
+            let body = (try? JSONEncoder().encode(cmd)) ?? Data()
+            self.write(conn, status: 200, body: body) { error in
+                // A worker can disappear while its poll is parked. Preserve the
+                // command for its next poll only while the caller still awaits it.
+                if error != nil, self.pending[cmd.commandId] != nil {
+                    self.queued[profile, default: []].append(cmd)
+                }
+            }
         }
         waiters[profile] = reply
-        queue.asyncAfter(deadline: .now() + 30) { [weak self] in
-            guard let self, !answered else { return }
-            if self.waiters[profile] != nil { self.waiters.removeValue(forKey: profile) }
+        waiterIDs[profile] = waiterID
+        // Keep receiving so a suspended worker's closed socket cannot masquerade
+        // as a waiting command channel until the 30-second poll timer expires.
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, done, error in
+            guard !answered, done || error != nil else { return }
+            answered = true
+            removeWaiter()
+            conn.cancel()
+        }
+        queue.asyncAfter(deadline: .now() + 30) {
+            guard !answered else { return }
             reply(Bridge.Command.idle)
         }
     }
@@ -265,7 +317,8 @@ final class BridgeServer {
         write(conn, status: status, body: body)
     }
 
-    private func write(_ conn: NWConnection, status: Int, body: Data) {
+    private func write(_ conn: NWConnection, status: Int, body: Data,
+                       completion: ((NWError?) -> Void)? = nil) {
         var head = "HTTP/1.1 \(status) \(status == 200 ? "OK" : "")\r\n"
         head += "Content-Type: application/json\r\n"
         head += "Content-Length: \(body.count)\r\n"
@@ -274,7 +327,10 @@ final class BridgeServer {
         head += "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
         head += "Connection: close\r\n\r\n"
         conn.send(content: Data(head.utf8) + body,
-                  completion: .contentProcessed { _ in conn.cancel() })
+                  completion: .contentProcessed { error in
+                      completion?(error)
+                      conn.cancel()
+                  })
     }
 
     private func authorised(_ candidate: String?) -> Bool {

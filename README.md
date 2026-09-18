@@ -84,7 +84,9 @@ been measured.
 Codex, GitHub Copilot, …) see and manage Safari tabs: list windows and tabs across every profile
 with tab-group labels, find stale or duplicate tabs, close, move tabs between windows (which places
 them in the target window's tab group), open a URL into a chosen tab group, and bring a tab to the
-front. See [`mcp/README.md`](mcp/README.md).
+front. See [`mcp/README.md`](mcp/README.md). Tab-report requests follow the reusable
+[report workflow](mcp/TAB_REPORTS.md), grouped by profile and tab group and saved in the user's
+configured memory location.
 
 ```bash
 cd mcp && npm install

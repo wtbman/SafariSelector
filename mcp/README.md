@@ -49,3 +49,18 @@ node server.js          # stdio MCP
 ```
 
 Register with your client, e.g. for Claude Code: `claude mcp add safari -- node /path/to/mcp/server.js`.
+
+## Tab reports
+
+When a user requests a tab report, follow [TAB_REPORTS.md](TAB_REPORTS.md). It covers complete
+inventories by profile and tab group, live Jira/ADO/PR status checks through their MCPs, duplicate
+and stale-page evidence, large reports split into linked documents, and authorized cleanup logs.
+Reports go to the user's configured memory location for the active domain; no `Journal` folder or
+machine-specific vault path is assumed.
+
+The server loads this file relative to its module and sends it through MCP initialization
+`instructions`. The tab-list tool description also highlights the workflow for clients that do
+not surface initialization instructions. Reconnect/restart the MCP client connection after an
+instruction update to receive the new text; no Safari app rebuild is needed.
+
+Run `npm test` to verify the stdio initialization and tool discovery without accessing Safari.

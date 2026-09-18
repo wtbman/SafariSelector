@@ -11,10 +11,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
 import * as as from "./applescript.js";
 import * as bridge from "./bridge.js";
 
-const server = new McpServer({ name: "safari-selector", version: "0.2.0" });
+// One source of truth for repository agents and MCP clients in any working directory.
+const tabReportInstructions = readFileSync(new URL("./TAB_REPORTS.md", import.meta.url), "utf8");
+const server = new McpServer({ name: "safari-selector", version: "0.2.1" }, {
+  instructions: tabReportInstructions,
+});
 const text = (s) => ({ content: [{ type: "text", text: typeof s === "string" ? s : JSON.stringify(s, null, 2) }] });
 const fail = (e) => ({ isError: true, content: [{ type: "text", text: String(e.message || e) }] });
 
@@ -132,7 +137,7 @@ server.registerTool("safari_list_windows", {
 });
 
 server.registerTool("safari_list_tabs", {
-  description: "List tabs, one line each: `<asWindowId>:<index> #<tabId> [age] title — url`. Age is time since the tab was last active; `>Nd` means never activated since tracking began N days ago; `?` = unknown. `#tabId` and ages need the SafariSelector app + extension. NOTE: tab ids are reassigned whenever Safari restarts the extension, so take ids from a listing made immediately before closing/moving by id; closing by URL is the robust alternative.",
+  description: "List tabs, one line each: `<asWindowId>:<index> #<tabId> [age] title — url`. Age is time since the tab was last active; `>Nd` means never activated since tracking began N days ago; `?` = unknown. `#tabId` and ages need the SafariSelector app + extension. NOTE: tab ids are reassigned whenever Safari restarts the extension, so take ids from a listing made immediately before closing/moving by id; closing by URL is the robust alternative. For tab-report requests, follow the server tab-report instructions: organize by profile and tab group, verify ticket/PR states through their MCPs, include every tab, and save to the user's configured memory location. A report alone does not authorize cleanup.",
   inputSchema: {
     asWindowId: z.number().optional().describe("Only this AppleScript window"),
     windowLabel: z.string().optional().describe("Only windows whose tab-group label contains this (case-insensitive)"),

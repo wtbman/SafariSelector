@@ -17,7 +17,7 @@ alone is sufficient. SafariSelector combines them:
   whatever tab group the target window is currently showing — this is the mechanism, and it is
   [verified](docs/SPIKE-FINDINGS.md).
 - **AppleScript** supplies the human-readable tab-group names, which the extension cannot see.
-  Windows are correlated between the two views by active-tab URL.
+  Windows are correlated between the two views by page URL/title, tab count, and bounds.
 - The native handler receives `SFExtensionProfileKey`, a stable Safari-assigned **profile UUID**,
   giving real per-profile identity.
 
@@ -45,6 +45,7 @@ Run the settings and auto-select regression checks without launching Safari:
 ```bash
 ./scripts/test-config.sh
 bash scripts/test-routing.sh
+bash scripts/test-attribution.sh
 node --test tests/ExtensionRegressionTests.cjs
 ```
 
@@ -62,6 +63,10 @@ Use **Show Window** beside a profile to restore and bring its open Safari window
 forward while naming it. If several windows are open, choose one by its tab-group
 and page title from the menu. Profiles with no open windows have a disabled button.
 This works for named and unnamed profiles and does not open or change any tabs.
+When a profile's window list relies on previously learned group ownership, Settings
+labels it **Uses remembered ownership**. Live matching requires matching page URL,
+page title, tab count, and nearby window bounds. Ambiguous matches stay unresolved
+instead of teaching the app that a window belongs to an arbitrary profile.
 
 Saved profiles remain in Settings across restarts. Window counts and the link picker include
 only open browsing windows; saved tab groups without an open window are not destinations.

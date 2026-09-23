@@ -248,6 +248,12 @@ struct PreferencesView: View {
                                 .font(.system(size: 16))
                                 .foregroundStyle(.secondary)
                                 .fixedSize()
+                            if store.windows(for: uuid).contains(where: { !$0.isWarm }) {
+                                Text("Uses remembered ownership")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .help("Some windows are assigned from previous observations because no matching extension snapshot is available.")
+                            }
                             revealControl(for: uuid)
                         }
                         .padding(.top, 3)

@@ -58,8 +58,8 @@ nonisolated enum Bridge {
         let tabCount: Int
         let activeTabUrl: String
         let activeTabTitle: String
-        /// Screen geometry. This, not the active tab URL, is how a window in this
-        /// list is matched to the same window in AppleScript's list.
+        /// Screen geometry, checked together with active page and tab count when
+        /// matching against AppleScript. Neither geometry nor URL alone is unique.
         var left: Int?
         var top: Int?
         var width: Int?

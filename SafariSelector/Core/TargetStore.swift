@@ -30,10 +30,8 @@ final class TargetStore: ObservableObject {
     private let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "store")
     private let config: Config
 
-    /// How far a window's left edge and size may disagree between the two views
-    /// and still be considered the same window. These agree exactly in practice, so
-    /// this only absorbs rounding.
-    private static let shapeTolerance = 40
+    /// Allow small geometry differences, but never treat position/size as identity.
+    private static let geometryTolerance = 40
 
     init(config: Config) {
         self.config = config
@@ -115,14 +113,22 @@ final class TargetStore: ObservableObject {
         let snapshot = byProfile
         lock.unlock()
 
-        let pairing = pairByGeometry(scriptWindows: scriptWindows, snapshot: snapshot)
+        DispatchQueue.main.async {
+            self.apply(scriptWindows: scriptWindows, snapshot: snapshot)
+        }
+    }
+
+    /// Merge one scan on the main queue so learning and publishing use the same
+    /// settings state. Also allows regression tests without running Safari.
+    func apply(scriptWindows: [AppleScriptProbe.Window], snapshot: [String: [Bridge.WindowInfo]]) {
+        let pairing = Self.pairWindows(scriptWindows: scriptWindows, snapshot: snapshot)
 
         // Learn which profile owns each tab group while it is visible, so the same
         // window is still labelled correctly later when its profile is dormant.
         for w in scriptWindows {
             if let group = w.prefix, let matched = pairing[w.appleScriptID] {
                 let profile = matched.profile
-                DispatchQueue.main.async { self.config.learn(group: group, belongsTo: profile) }
+                config.learn(group: group, belongsTo: profile)
             }
         }
 
@@ -165,47 +171,43 @@ final class TargetStore: ObservableObject {
             return $0.displayLabel < $1.displayLabel
         }
 
-        DispatchQueue.main.async { self.targets = out }
+        targets = out
     }
 
-    /// Pairs AppleScript windows with extension windows, one-to-one, by geometry.
-    ///
-    /// The obvious key — the active tab's URL — is wrong. Several windows routinely
-    /// show the same page (especially just after this app has opened the same link
-    /// into a few of them), and they then collapse onto a single extension window,
-    /// which sends later links to the wrong window. Geometry is genuinely unique.
-    private func pairByGeometry(
+    /// Geometry alone is not identity: different profiles can have overlapping or
+    /// maximized windows, and extension snapshots can lag behind window changes.
+    /// Require matching page content and tab count as well as nearby bounds. Only
+    /// accept a mutually unique pair; an ambiguous match must not poison persisted
+    /// ownership or route a link into another profile. A later snapshot can resolve it.
+    static func pairWindows(
         scriptWindows: [AppleScriptProbe.Window],
         snapshot: [String: [Bridge.WindowInfo]]
     ) -> [Int: (profile: String, info: Bridge.WindowInfo)] {
-
-        var candidates: [(profile: String, info: Bridge.WindowInfo)] = []
-        for (profile, windows) in snapshot {
-            for w in windows { candidates.append((profile, w)) }
+        let candidates = snapshot.flatMap { profile, windows in
+            windows.map { (profile: profile, info: $0) }
         }
-
-        // Score every pair on shape, keeping vertical distance only as a tiebreak
-        // for the rare case where two windows share a left edge and size.
-        var scored: [(shape: Int, vertical: Int, scriptID: Int, index: Int)] = []
+        var matches: [Int: [Int]] = [:]
+        var candidateUses: [Int: Int] = [:]
         for w in scriptWindows {
-            for (i, c) in candidates.enumerated() {
-                guard let l = c.info.left, let t = c.info.top,
-                      let width = c.info.width, let h = c.info.height else { continue }
-                let other = AppleScriptProbe.Bounds(left: l, top: t, width: width, height: h)
-                let shape = w.bounds.shapeDistance(to: other)
-                guard shape <= Self.shapeTolerance else { continue }
-                scored.append((shape, w.bounds.verticalDistance(to: other), w.appleScriptID, i))
+            for (i, candidate) in candidates.enumerated() {
+                let c = candidate.info
+                guard c.tabCount == w.tabCount,
+                      c.activeTabUrl == w.activeTabURL,
+                      c.activeTabTitle == w.activeTabTitle,
+                      let left = c.left, let top = c.top,
+                      let width = c.width, let height = c.height else { continue }
+                let bounds = AppleScriptProbe.Bounds(left: left, top: top, width: width, height: height)
+                guard w.bounds.shapeDistance(to: bounds) <= geometryTolerance,
+                      w.bounds.verticalDistance(to: bounds) <= geometryTolerance else { continue }
+                matches[w.appleScriptID, default: []].append(i)
+                candidateUses[i, default: 0] += 1
             }
         }
 
-        // Best matches first, so one ambiguous window cannot cascade into a chain of
-        // wrong assignments. Each side is used at most once.
         var pairing: [Int: (profile: String, info: Bridge.WindowInfo)] = [:]
-        var used = Set<Int>()
-        for pair in scored.sorted(by: { ($0.shape, $0.vertical) < ($1.shape, $1.vertical) }) {
-            guard pairing[pair.scriptID] == nil, !used.contains(pair.index) else { continue }
-            pairing[pair.scriptID] = candidates[pair.index]
-            used.insert(pair.index)
+        for (id, indices) in matches {
+            guard indices.count == 1, let i = indices.first, candidateUses[i] == 1 else { continue }
+            pairing[id] = candidates[i]
         }
         return pairing
     }

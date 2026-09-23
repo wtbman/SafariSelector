@@ -96,6 +96,23 @@ struct WindowAttributionTests {
                    "Corrected ownership must survive restart while the extension is unavailable")
         try expect(reloaded.stored.profileAliases == config.stored.profileAliases,
                    "Learning ownership must preserve user-assigned profile names")
+
+        // Changing Safari's front-to-back order must not change per-profile lists.
+        for order in [Array(windows.reversed()), windows, Array(windows.reversed())] {
+            restartedStore.apply(scriptWindows: order, snapshot: [:])
+            try expect(restartedStore.windows(for: "social").map(\.appleScriptWindowID) == [2]
+                       && restartedStore.windows(for: "lending").map(\.appleScriptWindowID) == [1],
+                       "Focusing a window must not remove it or duplicate another profile's window")
+        }
+        restartedStore.apply(scriptWindows: nil, snapshot: [:])
+        try expect(restartedStore.scanFailed && restartedStore.windowCount(for: "social") == 1,
+                   "A failed scan must preserve the Show Window target and report refresh failure")
+        restartedStore.apply(scriptWindows: windows, snapshot: [:])
+        try expect(!restartedStore.scanFailed && restartedStore.windowCount(for: "social") == 1,
+                   "A successful rescan must clear the failure and preserve open windows")
+        restartedStore.apply(scriptWindows: [], snapshot: [:])
+        try expect(!restartedStore.scanFailed && restartedStore.targets.isEmpty,
+                   "A successful empty scan must remove genuinely closed windows")
         print("Passed \(checks) window attribution regression checks.")
     }
 }

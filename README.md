@@ -67,6 +67,9 @@ When a profile's window list relies on previously learned group ownership, Setti
 labels it **Uses remembered ownership**. Live matching requires matching page URL,
 page title, tab count, and nearby window bounds. Ambiguous matches stay unresolved
 instead of teaching the app that a window belongs to an arbitrary profile.
+Window scans capture stable Safari IDs before reading details, so bringing a window
+forward cannot shift the enumeration and duplicate or skip a window. Failed scans
+keep the last known list and show a refresh message instead of resetting counts.
 
 Saved profiles remain in Settings across restarts. Window counts and the link picker include
 only open browsing windows; saved tab groups without an open window are not destinations.

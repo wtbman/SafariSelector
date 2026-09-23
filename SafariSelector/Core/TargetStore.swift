@@ -24,6 +24,7 @@ import os.log
 final class TargetStore: ObservableObject {
 
     @Published private(set) var targets: [SafariTarget] = []
+    @Published private(set) var scanFailed = false
 
     private var byProfile: [String: [Bridge.WindowInfo]] = [:]
     private let lock = NSLock()
@@ -120,7 +121,13 @@ final class TargetStore: ObservableObject {
 
     /// Merge one scan on the main queue so learning and publishing use the same
     /// settings state. Also allows regression tests without running Safari.
-    func apply(scriptWindows: [AppleScriptProbe.Window], snapshot: [String: [Bridge.WindowInfo]]) {
+    func apply(scriptWindows: [AppleScriptProbe.Window]?, snapshot: [String: [Bridge.WindowInfo]]) {
+        guard let scriptWindows else {
+            // A failed read is not evidence that every Safari window closed.
+            scanFailed = true
+            return
+        }
+        scanFailed = false
         let pairing = Self.pairWindows(scriptWindows: scriptWindows, snapshot: snapshot)
 
         // Learn which profile owns each tab group while it is visible, so the same

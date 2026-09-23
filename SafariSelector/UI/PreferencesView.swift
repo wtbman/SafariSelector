@@ -267,6 +267,12 @@ struct PreferencesView: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if store.scanFailed {
+                Text("Couldn't refresh Safari windows. Showing the last known list; press Refresh to try again.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Button("Refresh") {
                 revealError = nil
                 store.rebuild()

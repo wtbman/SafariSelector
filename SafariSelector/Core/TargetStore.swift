@@ -68,7 +68,11 @@ final class TargetStore: ObservableObject {
     }
 
     func windowCount(for uuid: String) -> Int {
-        targets.filter { owningProfile(of: $0) == uuid }.count
+        windows(for: uuid).count
+    }
+
+    func windows(for uuid: String) -> [SafariTarget] {
+        targets.filter { owningProfile(of: $0) == uuid }
     }
 
     /// Raw per-profile window counts, before merging. Diagnostic only.

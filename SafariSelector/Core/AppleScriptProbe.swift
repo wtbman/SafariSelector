@@ -119,17 +119,24 @@ enum AppleScriptProbe {
         return result
     }
 
-    /// Brings a window to the front. This is also how a dormant profile is woken:
-    /// focusing one of its windows fires `windows.onFocusChanged` inside that
-    /// profile, which starts its extension worker.
-    static func focus(windowID: Int) {
-        let ok = run("""
+    /// Restores and brings an existing window forward, without opening any tabs.
+    /// A missing window fails rather than activating an unrelated Safari window.
+    /// Call on `queue`, as with all other AppleScript operations.
+    @discardableResult
+    static func focus(windowID: Int) -> Bool {
+        let result = run("""
+        if application "Safari" is not running then return "missing"
         tell application "Safari"
-            activate
+            if not (exists window id \(windowID)) then return "missing"
+            set miniaturized of window id \(windowID) to false
             set index of window id \(windowID) to 1
+            activate
+            return "focused"
         end tell
         """)
-        DebugLog.write("focus(window \(windowID)) -> \(ok == nil ? "FAILED" : "ok")")
+        let succeeded = result == "focused"
+        DebugLog.write("focus(window \(windowID)) -> \(succeeded ? "ok" : "FAILED")")
+        return succeeded
     }
 
     private static func run(_ source: String) -> String? {

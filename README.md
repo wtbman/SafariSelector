@@ -58,6 +58,11 @@ The focused window's group comes first, followed by other open groups and previo
 groups, without duplicates. These are naming clues from Safari window titles, which can
 also contain a profile name; they disappear once you name the profile.
 
+Use **Show Window** beside a profile to restore and bring its open Safari window
+forward while naming it. If several windows are open, choose one by its tab-group
+and page title from the menu. Profiles with no open windows have a disabled button.
+This works for named and unnamed profiles and does not open or change any tabs.
+
 Saved profiles remain in Settings across restarts. Window counts and the link picker include
 only open browsing windows; saved tab groups without an open window are not destinations.
 Before routing a link, the app focuses the chosen window and waits for its extension to

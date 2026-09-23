@@ -62,10 +62,16 @@ enum AppleScriptProbe {
     private static let separator = " — "
 
     private static let listScript = """
+    if application "Safari" is not running then return ""
     tell application "Safari"
         set out to ""
-        repeat with w in windows
+        -- Window order can change while activation finishes. Capture scalar IDs
+        -- in one request rather than iterating index-based window references.
+        set windowIDs to id of every window
+        repeat with savedID in windowIDs
+            set wid to contents of savedID
             try
+                set w to window id wid
                 set b to bounds of w
                 -- A freshly opened window's empty tab has no URL or name (missing
                 -- value), and concatenating that throws. Default each field
@@ -78,7 +84,7 @@ enum AppleScriptProbe {
                 try
                     set t to (name of current tab of w) as text
                 end try
-                set out to out & (id of w as text) & "\t" & (name of w) & "\t" ¬
+                set out to out & (wid as text) & "\t" & (name of w) & "\t" ¬
                     & u & "\t" & t & "\t" ¬
                     & (count of tabs of w) & "\t" ¬
                     & (item 1 of b as text) & "," & (item 2 of b as text) & "," ¬
@@ -89,13 +95,15 @@ enum AppleScriptProbe {
     end tell
     """
 
-    static func windows() -> [Window] {
-        guard let output = run(listScript) else { return [] }
+    /// Nil means the scan failed; an empty list means Safari has no open windows.
+    static func windows() -> [Window]? {
+        guard let output = run(listScript) else { return nil }
         return parseWindows(output)
     }
 
     static func parseWindows(_ output: String) -> [Window] {
         var result: [Window] = []
+        var seenIDs = Set<Int>()
         for line in output.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false)
             // Safari also exposes auxiliary/stale windows with no tabs. They
@@ -106,7 +114,7 @@ enum AppleScriptProbe {
             let prefix = name.components(separatedBy: separator).first
             // AppleScript reports {left, top, right, bottom}.
             let b = f[5].split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            guard b.count == 4 else { continue }
+            guard b.count == 4, seenIDs.insert(wid).inserted else { continue }
             result.append(Window(
                 appleScriptID: wid,
                 prefix: (prefix?.isEmpty == false && prefix != name) ? prefix : nil,
@@ -119,17 +127,24 @@ enum AppleScriptProbe {
         return result
     }
 
-    /// Brings a window to the front. This is also how a dormant profile is woken:
-    /// focusing one of its windows fires `windows.onFocusChanged` inside that
-    /// profile, which starts its extension worker.
-    static func focus(windowID: Int) {
-        let ok = run("""
+    /// Restores and brings an existing window forward, without opening any tabs.
+    /// A missing window fails rather than activating an unrelated Safari window.
+    /// Call on `queue`, as with all other AppleScript operations.
+    @discardableResult
+    static func focus(windowID: Int) -> Bool {
+        let result = run("""
+        if application "Safari" is not running then return "missing"
         tell application "Safari"
-            activate
+            if not (exists window id \(windowID)) then return "missing"
+            set miniaturized of window id \(windowID) to false
             set index of window id \(windowID) to 1
+            activate
+            return "focused"
         end tell
         """)
-        DebugLog.write("focus(window \(windowID)) -> \(ok == nil ? "FAILED" : "ok")")
+        let succeeded = result == "focused"
+        DebugLog.write("focus(window \(windowID)) -> \(succeeded ? "ok" : "FAILED")")
+        return succeeded
     }
 
     private static func run(_ source: String) -> String? {

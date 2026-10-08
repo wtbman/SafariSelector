@@ -33,8 +33,8 @@ enum AppleScriptProbe {
         let bounds: Bounds
     }
 
-    /// Window position and size, top-left origin — the same convention the
-    /// WebExtension `windows` API uses for `left`/`top`/`width`/`height`.
+    /// Window position and size, top-left origin. WebExtension coordinates can
+    /// have a different vertical origin on secondary displays.
     struct Bounds: Hashable {
         let left: Int, top: Int, width: Int, height: Int
 

@@ -65,7 +65,11 @@ and page title from the menu. Profiles with no open windows have a disabled butt
 This works for named and unnamed profiles and does not open or change any tabs.
 When a profile's window list relies on previously learned group ownership, Settings
 labels it **Uses remembered ownership**. Live matching requires matching page URL,
-page title, tab count, and nearby window bounds. Ambiguous matches stay unresolved
+page title, tab count, and nearby window bounds. For secondary displays where Safari's
+two APIs report different vertical origins, at least two unique windows in the same
+profile must confirm the same offset with distinct URLs. Blank and ambiguous pages
+cannot use this exception. Open commands use the matched extension's coordinates.
+Ambiguous matches stay unresolved
 instead of teaching the app that a window belongs to an arbitrary profile.
 Window scans capture stable Safari IDs before reading details, so bringing a window
 forward cannot shift the enumeration and duplicate or skip a window. Failed scans

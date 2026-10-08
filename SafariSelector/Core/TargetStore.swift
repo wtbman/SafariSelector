@@ -168,7 +168,8 @@ final class TargetStore: ObservableObject {
                 activeTabURL: w.activeTabURL,
                 tabCount: w.tabCount,
                 isFocused: matched?.info.focused ?? false,
-                bounds: w.bounds
+                bounds: w.bounds,
+                extensionBounds: matched.flatMap { Self.bounds(of: $0.info) }
             ))
         }
 
@@ -183,7 +184,11 @@ final class TargetStore: ObservableObject {
 
     /// Geometry alone is not identity: different profiles can have overlapping or
     /// maximized windows, and extension snapshots can lag behind window changes.
-    /// Require matching page content and tab count as well as nearby bounds. Only
+    /// Require matching page content and tab count as well as nearby bounds. Safari
+    /// can report a different vertical origin for windows on secondary displays.
+    /// Accept that displacement only when at least two mutually unique windows in
+    /// the same profile, showing distinct nonempty URLs, independently confirm it.
+    /// Do not use that evidence to guess ownership of blank or duplicate pages. Only
     /// accept a mutually unique pair; an ambiguous match must not poison persisted
     /// ownership or route a link into another profile. A later snapshot can resolve it.
     static func pairWindows(
@@ -193,19 +198,46 @@ final class TargetStore: ObservableObject {
         let candidates = snapshot.flatMap { profile, windows in
             windows.map { (profile: profile, info: $0) }
         }
-        var matches: [Int: [Int]] = [:]
-        var candidateUses: [Int: Int] = [:]
+        var contentMatches: [Int: [Int]] = [:]
+        var contentUses: [Int: Int] = [:]
         for w in scriptWindows {
             for (i, candidate) in candidates.enumerated() {
                 let c = candidate.info
                 guard c.tabCount == w.tabCount,
                       c.activeTabUrl == w.activeTabURL,
                       c.activeTabTitle == w.activeTabTitle,
-                      let left = c.left, let top = c.top,
-                      let width = c.width, let height = c.height else { continue }
-                let bounds = AppleScriptProbe.Bounds(left: left, top: top, width: width, height: height)
-                guard w.bounds.shapeDistance(to: bounds) <= geometryTolerance,
-                      w.bounds.verticalDistance(to: bounds) <= geometryTolerance else { continue }
+                      let bounds = bounds(of: c),
+                      w.bounds.shapeDistance(to: bounds) <= geometryTolerance else { continue }
+                contentMatches[w.appleScriptID, default: []].append(i)
+                contentUses[i, default: 0] += 1
+            }
+        }
+
+        // Recompute from this scan instead of persisting offsets: display layouts
+        // and extension snapshots change. A lone moved/stale window is no proof.
+        var offsetEvidence: [String: [Int: Set<String>]] = [:]
+        for w in scriptWindows {
+            guard !w.activeTabURL.isEmpty, !w.activeTabTitle.isEmpty,
+                  let indices = contentMatches[w.appleScriptID], indices.count == 1,
+                  let i = indices.first, contentUses[i] == 1,
+                  let top = candidates[i].info.top else { continue }
+            let candidate = candidates[i]
+            offsetEvidence[candidate.profile, default: [:]][top - w.bounds.top, default: []]
+                .insert(w.activeTabURL)
+        }
+
+        var matches: [Int: [Int]] = [:]
+        var candidateUses: [Int: Int] = [:]
+        for w in scriptWindows {
+            let indices = contentMatches[w.appleScriptID] ?? []
+            for i in indices {
+                let candidate = candidates[i]
+                guard let bounds = bounds(of: candidate.info) else { continue }
+                let offset = bounds.top - w.bounds.top
+                let corroborated = !w.activeTabURL.isEmpty && !w.activeTabTitle.isEmpty
+                    && indices.count == 1 && contentUses[i] == 1
+                    && (offsetEvidence[candidate.profile]?[offset]?.count ?? 0) >= 2
+                guard w.bounds.verticalDistance(to: bounds) <= geometryTolerance || corroborated else { continue }
                 matches[w.appleScriptID, default: []].append(i)
                 candidateUses[i, default: 0] += 1
             }
@@ -217,5 +249,11 @@ final class TargetStore: ObservableObject {
             pairing[id] = candidates[i]
         }
         return pairing
+    }
+
+    private static func bounds(of info: Bridge.WindowInfo) -> AppleScriptProbe.Bounds? {
+        guard let left = info.left, let top = info.top,
+              let width = info.width, let height = info.height else { return nil }
+        return .init(left: left, top: top, width: width, height: height)
     }
 }

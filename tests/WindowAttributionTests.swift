@@ -67,6 +67,55 @@ struct WindowAttributionTests {
         try expect(TargetStore.pairWindows(scriptWindows: [lending], snapshot: ["lending": [missingGeometry]]).isEmpty,
                    "Incomplete geometry must leave ownership unresolved")
 
+        // Reproduce the measured 2511pt secondary-display origin difference.
+        let upperA = window(10, group: "Upper A", url: "https://a.example/", title: "A", count: 190, top: -1247)
+        let upperB = window(11, group: "Upper B", url: "https://b.example/", title: "B", count: 48, top: -2520)
+        let upperC = window(12, group: "Upper C", url: "https://c.example/", title: "C", count: 23, top: -3810)
+        var shiftedA = reported(upperA, id: 110)
+        var shiftedB = reported(upperB, id: 111)
+        var shiftedC = reported(upperC, id: 112)
+        shiftedA.top! += 2511
+        shiftedB.top! += 2511
+        shiftedC.top! += 2511
+        let shiftedWindows = [upperA, upperB, upperC, lending]
+        let shiftedSnapshot = ["personal": [shiftedA, shiftedB, shiftedC], "lending": [lendingReport]]
+        let shifted = TargetStore.pairWindows(scriptWindows: shiftedWindows, snapshot: shiftedSnapshot)
+        try expect(shifted[10]?.info.windowId == 110 && shifted[11]?.info.windowId == 111
+                   && shifted[12]?.info.windowId == 112 && shifted[1]?.profile == "lending",
+                   "Corroborated secondary-display offsets must coexist with ordinary coordinates")
+        try expect(TargetStore.pairWindows(scriptWindows: [upperA], snapshot: ["personal": [shiftedA]]).isEmpty,
+                   "One distinct page alone must not justify ignoring a stale vertical position")
+        try expect(TargetStore.pairWindows(scriptWindows: [upperA, upperB],
+            snapshot: ["one": [shiftedA], "two": [shiftedB]]).isEmpty,
+                   "Offset evidence must not leak between profiles")
+        var inconsistentB = shiftedB
+        inconsistentB.top! += 300
+        try expect(TargetStore.pairWindows(scriptWindows: [upperA, upperB],
+            snapshot: ["personal": [shiftedA, inconsistentB]]).isEmpty,
+                   "Unrelated window moves must not be mistaken for a shared origin")
+        let repeatedA = window(13, group: "Repeated A", url: upperA.activeTabURL,
+                               title: upperA.activeTabTitle, count: upperA.tabCount, top: -5100)
+        let ambiguousShift = TargetStore.pairWindows(scriptWindows: shiftedWindows + [repeatedA],
+                                                   snapshot: shiftedSnapshot)
+        try expect(ambiguousShift[10] == nil && ambiguousShift[13] == nil
+                   && ambiguousShift[11]?.info.windowId == 111 && ambiguousShift[12]?.info.windowId == 112,
+                   "A confirmed offset must not guess which duplicate page owns a report")
+        let blankUpper = window(14, group: "Blank", top: -6500)
+        var blankReport = reported(blankUpper, id: 114)
+        blankReport.top! += 2511
+        try expect(TargetStore.pairWindows(scriptWindows: shiftedWindows + [blankUpper],
+            snapshot: ["personal": [shiftedA, shiftedB, shiftedC, blankReport], "lending": [lendingReport]])[14] == nil,
+                   "Confirmed offsets must not attribute blank pages with little identifying evidence")
+        let sameURLA = window(15, group: "Same URL A", url: "https://same.example/", title: "Page", count: 2, top: -1000)
+        let sameURLB = window(16, group: "Same URL B", url: "https://same.example/", title: "Page", count: 3, top: -2000)
+        var sameReportA = reported(sameURLA, id: 115)
+        var sameReportB = reported(sameURLB, id: 116)
+        sameReportA.top! += 2511
+        sameReportB.top! += 2511
+        try expect(TargetStore.pairWindows(scriptWindows: [sameURLA, sameURLB],
+            snapshot: ["personal": [sameReportA, sameReportB]]).isEmpty,
+                   "Two counts of the same page must not count as independent offset evidence")
+
         let config = Config()
         config.stored.profileAliases = ["lending": "Lending profile", "social": "Social profile"]
         let store = TargetStore(config: config)
@@ -113,6 +162,12 @@ struct WindowAttributionTests {
         restartedStore.apply(scriptWindows: [], snapshot: [:])
         try expect(!restartedStore.scanFailed && restartedStore.targets.isEmpty,
                    "A successful empty scan must remove genuinely closed windows")
+        store.apply(scriptWindows: shiftedWindows, snapshot: shiftedSnapshot)
+        let shiftedTarget = store.targets.first { $0.appleScriptWindowID == 11 }
+        try expect(shiftedTarget?.bounds?.top == -2520 && shiftedTarget?.extensionBounds?.top == -9,
+                   "OPEN geometry must retain the extension origin separately from native diagnostics")
+        try expect(store.targets.first { $0.appleScriptWindowID == 10 }?.profileUUID == "personal",
+                   "Corroborated multi-display pairs must be available as warm routing targets")
         print("Passed \(checks) window attribution regression checks.")
     }
 }

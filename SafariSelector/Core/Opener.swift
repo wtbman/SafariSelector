@@ -42,7 +42,7 @@ final class Opener {
             reportExtensionUnavailable()
             return
         }
-        let match = warm.bounds.map {
+        let match = warm.extensionBounds.map {
             (left: $0.left, top: $0.top, width: $0.width, height: $0.height)
         }
         guard let profile = warm.profileUUID, let windowID = warm.windowId else {

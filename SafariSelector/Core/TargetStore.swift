@@ -24,16 +24,15 @@ import os.log
 final class TargetStore: ObservableObject {
 
     @Published private(set) var targets: [SafariTarget] = []
+    @Published private(set) var scanFailed = false
 
     private var byProfile: [String: [Bridge.WindowInfo]] = [:]
     private let lock = NSLock()
     private let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "store")
     private let config: Config
 
-    /// How far a window's left edge and size may disagree between the two views
-    /// and still be considered the same window. These agree exactly in practice, so
-    /// this only absorbs rounding.
-    private static let shapeTolerance = 40
+    /// Allow small geometry differences, but never treat position/size as identity.
+    private static let geometryTolerance = 40
 
     init(config: Config) {
         self.config = config
@@ -68,7 +67,11 @@ final class TargetStore: ObservableObject {
     }
 
     func windowCount(for uuid: String) -> Int {
-        targets.filter { owningProfile(of: $0) == uuid }.count
+        windows(for: uuid).count
+    }
+
+    func windows(for uuid: String) -> [SafariTarget] {
+        targets.filter { owningProfile(of: $0) == uuid }
     }
 
     /// Raw per-profile window counts, before merging. Diagnostic only.
@@ -111,14 +114,28 @@ final class TargetStore: ObservableObject {
         let snapshot = byProfile
         lock.unlock()
 
-        let pairing = pairByGeometry(scriptWindows: scriptWindows, snapshot: snapshot)
+        DispatchQueue.main.async {
+            self.apply(scriptWindows: scriptWindows, snapshot: snapshot)
+        }
+    }
+
+    /// Merge one scan on the main queue so learning and publishing use the same
+    /// settings state. Also allows regression tests without running Safari.
+    func apply(scriptWindows: [AppleScriptProbe.Window]?, snapshot: [String: [Bridge.WindowInfo]]) {
+        guard let scriptWindows else {
+            // A failed read is not evidence that every Safari window closed.
+            scanFailed = true
+            return
+        }
+        scanFailed = false
+        let pairing = Self.pairWindows(scriptWindows: scriptWindows, snapshot: snapshot)
 
         // Learn which profile owns each tab group while it is visible, so the same
         // window is still labelled correctly later when its profile is dormant.
         for w in scriptWindows {
             if let group = w.prefix, let matched = pairing[w.appleScriptID] {
                 let profile = matched.profile
-                DispatchQueue.main.async { self.config.learn(group: group, belongsTo: profile) }
+                config.learn(group: group, belongsTo: profile)
             }
         }
 
@@ -151,7 +168,8 @@ final class TargetStore: ObservableObject {
                 activeTabURL: w.activeTabURL,
                 tabCount: w.tabCount,
                 isFocused: matched?.info.focused ?? false,
-                bounds: w.bounds
+                bounds: w.bounds,
+                extensionBounds: matched.flatMap { Self.bounds(of: $0.info) }
             ))
         }
 
@@ -161,48 +179,81 @@ final class TargetStore: ObservableObject {
             return $0.displayLabel < $1.displayLabel
         }
 
-        DispatchQueue.main.async { self.targets = out }
+        targets = out
     }
 
-    /// Pairs AppleScript windows with extension windows, one-to-one, by geometry.
-    ///
-    /// The obvious key — the active tab's URL — is wrong. Several windows routinely
-    /// show the same page (especially just after this app has opened the same link
-    /// into a few of them), and they then collapse onto a single extension window,
-    /// which sends later links to the wrong window. Geometry is genuinely unique.
-    private func pairByGeometry(
+    /// Geometry alone is not identity: different profiles can have overlapping or
+    /// maximized windows, and extension snapshots can lag behind window changes.
+    /// Require matching page content and tab count as well as nearby bounds. Safari
+    /// can report a different vertical origin for windows on secondary displays.
+    /// Accept that displacement only when at least two mutually unique windows in
+    /// the same profile, showing distinct nonempty URLs, independently confirm it.
+    /// Do not use that evidence to guess ownership of blank or duplicate pages. Only
+    /// accept a mutually unique pair; an ambiguous match must not poison persisted
+    /// ownership or route a link into another profile. A later snapshot can resolve it.
+    static func pairWindows(
         scriptWindows: [AppleScriptProbe.Window],
         snapshot: [String: [Bridge.WindowInfo]]
     ) -> [Int: (profile: String, info: Bridge.WindowInfo)] {
-
-        var candidates: [(profile: String, info: Bridge.WindowInfo)] = []
-        for (profile, windows) in snapshot {
-            for w in windows { candidates.append((profile, w)) }
+        let candidates = snapshot.flatMap { profile, windows in
+            windows.map { (profile: profile, info: $0) }
         }
-
-        // Score every pair on shape, keeping vertical distance only as a tiebreak
-        // for the rare case where two windows share a left edge and size.
-        var scored: [(shape: Int, vertical: Int, scriptID: Int, index: Int)] = []
+        var contentMatches: [Int: [Int]] = [:]
+        var contentUses: [Int: Int] = [:]
         for w in scriptWindows {
-            for (i, c) in candidates.enumerated() {
-                guard let l = c.info.left, let t = c.info.top,
-                      let width = c.info.width, let h = c.info.height else { continue }
-                let other = AppleScriptProbe.Bounds(left: l, top: t, width: width, height: h)
-                let shape = w.bounds.shapeDistance(to: other)
-                guard shape <= Self.shapeTolerance else { continue }
-                scored.append((shape, w.bounds.verticalDistance(to: other), w.appleScriptID, i))
+            for (i, candidate) in candidates.enumerated() {
+                let c = candidate.info
+                guard c.tabCount == w.tabCount,
+                      c.activeTabUrl == w.activeTabURL,
+                      c.activeTabTitle == w.activeTabTitle,
+                      let bounds = bounds(of: c),
+                      w.bounds.shapeDistance(to: bounds) <= geometryTolerance else { continue }
+                contentMatches[w.appleScriptID, default: []].append(i)
+                contentUses[i, default: 0] += 1
             }
         }
 
-        // Best matches first, so one ambiguous window cannot cascade into a chain of
-        // wrong assignments. Each side is used at most once.
+        // Recompute from this scan instead of persisting offsets: display layouts
+        // and extension snapshots change. A lone moved/stale window is no proof.
+        var offsetEvidence: [String: [Int: Set<String>]] = [:]
+        for w in scriptWindows {
+            guard !w.activeTabURL.isEmpty, !w.activeTabTitle.isEmpty,
+                  let indices = contentMatches[w.appleScriptID], indices.count == 1,
+                  let i = indices.first, contentUses[i] == 1,
+                  let top = candidates[i].info.top else { continue }
+            let candidate = candidates[i]
+            offsetEvidence[candidate.profile, default: [:]][top - w.bounds.top, default: []]
+                .insert(w.activeTabURL)
+        }
+
+        var matches: [Int: [Int]] = [:]
+        var candidateUses: [Int: Int] = [:]
+        for w in scriptWindows {
+            let indices = contentMatches[w.appleScriptID] ?? []
+            for i in indices {
+                let candidate = candidates[i]
+                guard let bounds = bounds(of: candidate.info) else { continue }
+                let offset = bounds.top - w.bounds.top
+                let corroborated = !w.activeTabURL.isEmpty && !w.activeTabTitle.isEmpty
+                    && indices.count == 1 && contentUses[i] == 1
+                    && (offsetEvidence[candidate.profile]?[offset]?.count ?? 0) >= 2
+                guard w.bounds.verticalDistance(to: bounds) <= geometryTolerance || corroborated else { continue }
+                matches[w.appleScriptID, default: []].append(i)
+                candidateUses[i, default: 0] += 1
+            }
+        }
+
         var pairing: [Int: (profile: String, info: Bridge.WindowInfo)] = [:]
-        var used = Set<Int>()
-        for pair in scored.sorted(by: { ($0.shape, $0.vertical) < ($1.shape, $1.vertical) }) {
-            guard pairing[pair.scriptID] == nil, !used.contains(pair.index) else { continue }
-            pairing[pair.scriptID] = candidates[pair.index]
-            used.insert(pair.index)
+        for (id, indices) in matches {
+            guard indices.count == 1, let i = indices.first, candidateUses[i] == 1 else { continue }
+            pairing[id] = candidates[i]
         }
         return pairing
+    }
+
+    private static func bounds(of info: Bridge.WindowInfo) -> AppleScriptProbe.Bounds? {
+        guard let left = info.left, let top = info.top,
+              let width = info.width, let height = info.height else { return nil }
+        return .init(left: left, top: top, width: width, height: height)
     }
 }

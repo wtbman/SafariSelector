@@ -32,6 +32,12 @@ codesign -v --strict "$DEST"
 echo "==> Registering with LaunchServices"
 "$LSREG" -u "$DEST" 2>/dev/null || true
 "$LSREG" -f -R -trusted "$DEST"
+echo "==> Registering Safari extension"
+# Xcode can also register the copy in DerivedData. Keep Safari pointed at the
+# stable /Applications bundle so a cleaned build directory cannot strand it.
+pluginkit -r "$DD/Build/Products/Debug/SafariSelector.app/Contents/PlugIns/SafariSelector Extension.appex" 2>/dev/null || true
+pluginkit -a "$DEST/Contents/PlugIns/SafariSelector Extension.appex"
+pluginkit -e use -i cc.wtb.SafariSelector.Extension
 open "$DEST"
 
 cat <<'EOF'

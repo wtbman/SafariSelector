@@ -83,11 +83,23 @@ struct WindowAttributionTests {
         try expect(shifted[10]?.info.windowId == 110 && shifted[11]?.info.windowId == 111
                    && shifted[12]?.info.windowId == 112 && shifted[1]?.profile == "lending",
                    "Corroborated secondary-display offsets must coexist with ordinary coordinates")
+        var shiftedSocial = socialReport
+        shiftedSocial.top! += 2511
+        let crossProfile = TargetStore.pairWindows(scriptWindows: shiftedWindows + [social],
+            snapshot: ["personal": [shiftedA, shiftedB, shiftedC],
+                       "lending": [lendingReport], "social": [shiftedSocial]])
+        try expect(crossProfile[2]?.profile == "social" && crossProfile[2]?.info.windowId == 202,
+                   "Confirmed display offsets must warm a uniquely identified single-window profile")
+        shiftedSocial.top! += 300
+        try expect(TargetStore.pairWindows(scriptWindows: shiftedWindows + [social],
+            snapshot: ["personal": [shiftedA, shiftedB, shiftedC],
+                       "lending": [lendingReport], "social": [shiftedSocial]])[2] == nil,
+                   "A different offset must not borrow confirmation from another profile")
         try expect(TargetStore.pairWindows(scriptWindows: [upperA], snapshot: ["personal": [shiftedA]]).isEmpty,
                    "One distinct page alone must not justify ignoring a stale vertical position")
         try expect(TargetStore.pairWindows(scriptWindows: [upperA, upperB],
             snapshot: ["one": [shiftedA], "two": [shiftedB]]).isEmpty,
-                   "Offset evidence must not leak between profiles")
+                   "Two uncorroborated single-window profiles must not establish an offset")
         var inconsistentB = shiftedB
         inconsistentB.top! += 300
         try expect(TargetStore.pairWindows(scriptWindows: [upperA, upperB],

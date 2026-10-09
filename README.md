@@ -67,8 +67,9 @@ When a profile's window list relies on previously learned group ownership, Setti
 labels it **Uses remembered ownership**. Live matching requires matching page URL,
 page title, tab count, and nearby window bounds. For secondary displays where Safari's
 two APIs report different vertical origins, at least two unique windows in the same
-profile must confirm the same offset with distinct URLs. Blank and ambiguous pages
-cannot use this exception. Open commands use the matched extension's coordinates.
+profile must confirm the same offset with distinct URLs. Once confirmed, that display
+offset can also match a uniquely identified window in another profile. Blank and
+ambiguous pages cannot use this exception. Open commands use the matched extension's coordinates.
 Ambiguous matches stay unresolved
 instead of teaching the app that a window belongs to an arbitrary profile.
 Window scans capture stable Safari IDs before reading details, so bringing a window
@@ -86,7 +87,7 @@ The macOS extension uses a Manifest V2 persistent background page. Safari suspen
 the former Manifest V3 worker even with a pending poll, and focusing a window did
 not reliably restart it. Optional tab-history loading no longer blocks the bridge.
 After installing this update, reload the extension in Safari Settings. A PING reply
-reports extension version `1.1.0` and background mode `persistent` to verify the
+reports extension version `1.1.1` and background mode `persistent` to verify the
 running copy, rather than just the files installed on disk.
 
 This trades lower idle resource use for reliable routing: the extension background
@@ -101,7 +102,9 @@ been measured.
 Codex, GitHub Copilot, …) see and manage Safari tabs: list windows and tabs across every profile
 with tab-group labels, find stale or duplicate tabs, close, move tabs between windows (which places
 them in the target window's tab group), open a URL into a chosen tab group, and bring a tab to the
-front. See [`mcp/README.md`](mcp/README.md).
+front. See [`mcp/README.md`](mcp/README.md). Tab-report requests follow the reusable
+[report workflow](mcp/TAB_REPORTS.md), grouped by profile and tab group and saved in the user's
+configured memory location.
 
 ```bash
 cd mcp && npm install
@@ -113,3 +116,10 @@ at `node /path/to/SafariSelector/mcp/server.js`.
 ## Licence
 
 GNU General Public License v3.0 — see [LICENSE](LICENSE).
+
+Tab-activity storage saves are coalesced and serialized. Failed reads or writes retry
+with backoff without blocking routing or discarding unsaved activity. Closed-tab URLs
+are pruned on each save. PING includes `activityPersistence` with `status`, `pending`,
+and `lastSaved`; check this separately from bridge connectivity. `retrying` means
+Safari storage is failing, while `saving` can indicate an outstanding storage call.
+Diagnostics omit storage error text because Safari embeds browsing URLs in it.

@@ -70,46 +70,105 @@ async function discover() {
 // nobody touched in a month". Safari exposes nothing like this itself. Keyed by
 // URL rather than tab id: Safari reassigns every tab id whenever this worker
 // restarts, which would wipe a tab-id-keyed history several times a day.
-let activity = {};
+let activity = Object.create(null);
 let activityDirty = false;
+let activityLoaded = false;
+let activitySaving = false;
+let activityTimer = null;
+let activityRetry = 1000;
+let activityStatus = "loading";
+let activityLastSaved = null;
+
+function scheduleActivity(delay = 1000) {
+  // Coalesce bursts without postponing a retry indefinitely on busy windows.
+  if (activityTimer !== null || activitySaving) return;
+  activityTimer = setTimeout(() => {
+    activityTimer = null;
+    if (activityLoaded) void saveActivity();
+    else void loadActivity();
+  }, delay);
+}
+
+function activityFailed() {
+  activityStatus = "retrying";
+  // Safari's error includes the complete URL history. Never echo it to logs or PING.
+  scheduleActivity(activityRetry);
+  activityRetry = Math.min(activityRetry * 2, 60000);
+}
 
 async function loadActivity() {
-  const { activity: stored } = await api.storage.local.get("activity");
-  activity = stored || {};
-  const tabs = await api.tabs.query({});
-  const now = Date.now();
-  const seen = new Set();
-  for (const t of tabs) {
-    if (!t.url) continue;
-    seen.add(t.url);
-    if (!activity[t.url]) activity[t.url] = { firstSeen: now, lastActive: t.active ? now : null };
-    else if (t.active) activity[t.url].lastActive = now;
+  try {
+    const { activity: stored } = await withTimeout(api.storage.local.get("activity"), 5000);
+    for (const [url, entry] of Object.entries(stored || {})) {
+      if (!entry || !Number.isFinite(entry.firstSeen)) continue;
+      const current = activity[url];
+      activity[url] = {
+        firstSeen: Math.min(entry.firstSeen, current?.firstSeen ?? entry.firstSeen),
+        lastActive: Math.max(entry.lastActive || 0, current?.lastActive || 0) || null,
+      };
+    }
+    activityLoaded = true;
+    activityDirty = true;
+    await saveActivity();
+  } catch {
+    // Do not overwrite durable history when reading it failed or timed out.
+    activityFailed();
   }
-  // Drop URLs no tab shows any more; onRemoved doesn't tell us the URL.
-  for (const u of Object.keys(activity)) if (!seen.has(u)) delete activity[u];
-  activityDirty = true;
-  await saveActivity();
 }
 
 async function saveActivity() {
-  if (!activityDirty) return;
+  if (!activityLoaded || activitySaving || !activityDirty) return;
+  activitySaving = true;
+  activityStatus = "saving";
   activityDirty = false;
-  await api.storage.local.set({ activity });
+  let failed = false;
+  try {
+    const beforeQuery = { ...activity };
+    const tabs = await withTimeout(api.tabs.query({}), 5000);
+    const seen = new Set(tabs.map(t => t.url).filter(Boolean));
+    // Keep only URLs with live tabs, but preserve events received during the query.
+    for (const [url, entry] of Object.entries(beforeQuery)) {
+      if (!seen.has(url) && activity[url] === entry) delete activity[url];
+    }
+    const now = Date.now();
+    for (const t of tabs) {
+      if (t.url && !activity[t.url]) {
+        activity[t.url] = { firstSeen: now, lastActive: t.active ? now : null };
+      }
+    }
+    // Entries are replaced by touch(), so this snapshot stays immutable in flight.
+    // Do not timeout a write and start another: storage writes cannot be cancelled.
+    await api.storage.local.set({ activity: { ...activity } });
+    activityLastSaved = Date.now();
+    activityStatus = "saved";
+    activityRetry = 1000;
+  } catch {
+    activityDirty = true;
+    failed = true;
+  } finally {
+    activitySaving = false;
+    if (failed) activityFailed();
+    else if (activityDirty) scheduleActivity();
+  }
 }
 
 function touch(url) {
   if (!url) return;
   const now = Date.now();
-  (activity[url] ||= { firstSeen: now }).lastActive = now;
+  activity[url] = { firstSeen: activity[url]?.firstSeen ?? now, lastActive: now };
   activityDirty = true;
+  if (activityLoaded) scheduleActivity();
 }
 
 api.tabs.onActivated.addListener(async ({ tabId }) => {
-  try { touch((await api.tabs.get(tabId)).url); saveActivity(); } catch (e) { /* tab gone */ }
+  try { touch((await api.tabs.get(tabId)).url); } catch { /* tab gone */ }
 });
-api.tabs.onUpdated.addListener((tabId, info, tab) => {
-  // A navigation moves the tab to a new URL; that counts as activity on it.
-  if (info.url) { touch(info.url); if (tab.active) saveActivity(); }
+api.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.url) touch(info.url);
+});
+api.tabs.onRemoved.addListener(() => {
+  activityDirty = true;
+  if (activityLoaded) scheduleActivity();
 });
 
 // ----------------------------------------------------------------- snapshot
@@ -265,6 +324,8 @@ async function execute(cmd) {
       return { ok: true, data: {
         version: api.runtime.getManifest().version,
         backgroundMode: "persistent",
+        activityPersistence: { status: activityStatus, pending: activityDirty || activitySaving,
+          lastSaved: activityLastSaved },
       } };
     default:
       return { ok: false, error: "unknown command " + cmd.type };
@@ -336,5 +397,5 @@ for (const ev of [
 
 // History is optional. In Safari a storage/tab API can stall; waiting for it used
 // to prevent discovery and polling from ever starting in that profile.
-loadActivity().catch(() => {});
+void loadActivity();
 run();

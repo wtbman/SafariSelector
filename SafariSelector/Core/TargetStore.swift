@@ -187,7 +187,9 @@ final class TargetStore: ObservableObject {
     /// Require matching page content and tab count as well as nearby bounds. Safari
     /// can report a different vertical origin for windows on secondary displays.
     /// Accept that displacement only when at least two mutually unique windows in
-    /// the same profile, showing distinct nonempty URLs, independently confirm it.
+    /// one profile, showing distinct nonempty URLs, independently confirm it. The
+    /// display origin is shared across profiles, so that evidence can also identify
+    /// a single-window profile with its own unique page content.
     /// Do not use that evidence to guess ownership of blank or duplicate pages. Only
     /// accept a mutually unique pair; an ambiguous match must not poison persisted
     /// ownership or route a link into another profile. A later snapshot can resolve it.
@@ -225,6 +227,9 @@ final class TargetStore: ObservableObject {
             offsetEvidence[candidate.profile, default: [:]][top - w.bounds.top, default: []]
                 .insert(w.activeTabURL)
         }
+        let corroboratedOffsets = Set(offsetEvidence.values.flatMap { byOffset in
+            byOffset.compactMap { offset, urls in urls.count >= 2 ? offset : nil }
+        })
 
         var matches: [Int: [Int]] = [:]
         var candidateUses: [Int: Int] = [:]
@@ -236,7 +241,7 @@ final class TargetStore: ObservableObject {
                 let offset = bounds.top - w.bounds.top
                 let corroborated = !w.activeTabURL.isEmpty && !w.activeTabTitle.isEmpty
                     && indices.count == 1 && contentUses[i] == 1
-                    && (offsetEvidence[candidate.profile]?[offset]?.count ?? 0) >= 2
+                    && corroboratedOffsets.contains(offset)
                 guard w.bounds.verticalDistance(to: bounds) <= geometryTolerance || corroborated else { continue }
                 matches[w.appleScriptID, default: []].append(i)
                 candidateUses[i, default: 0] += 1

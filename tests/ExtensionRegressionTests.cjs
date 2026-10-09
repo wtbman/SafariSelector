@@ -10,7 +10,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(resources, 'manifest.json'
 const never = () => new Promise(() => {});
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 
-function harness({ discover = async () => ({ profileUUID: 'personal' }), fetcher } = {}) {
+function harness({ discover = async () => ({ profileUUID: 'personal' }), fetcher, storage = {}, tabs = {} } = {}) {
   const timers = new Map();
   let sequence = 0, discoveries = 0;
   const requests = [];
@@ -24,10 +24,10 @@ function harness({ discover = async () => ({ profileUUID: 'personal' }), fetcher
         sendNativeMessage() { discoveries++; return discover(discoveries); },
         getManifest: () => manifest,
       },
-      // Reproduce optional tab-history initialization never completing.
-      storage: { local: { get: never, set: async () => {} } },
+      // Override optional storage APIs to reproduce Safari failures.
+      storage: { local: { get: async () => ({}), set: async () => {}, ...storage } },
       tabs: { query: async () => [], onActivated: event(), onUpdated: event(),
-        onCreated: event(), onRemoved: event() },
+        onCreated: event(), onRemoved: event(), ...tabs },
       windows: { getAll: async () => [], onCreated: event(), onRemoved: event(), onFocusChanged: event() },
     },
     fetch(url, options) {
@@ -58,7 +58,7 @@ test('macOS background stays resident without widening permissions', () => {
 });
 
 test('a hung history load cannot prevent discovery, snapshot, or polling', async () => {
-  const h = harness(); await flush();
+  const h = harness({ storage: { get: never } }); await flush();
   assert.equal(h.discoveries(), 1);
   assert.ok(h.requests.some(r => r.url.endsWith('/snapshot')));
   assert.ok(h.requests.some(r => r.url.includes('/poll?profile=personal')));
@@ -100,7 +100,7 @@ test('PING identifies the extension actually loaded by Safari', async () => {
   const h = harness(); await flush();
   const result = await vm.runInContext('execute({ type: "PING" })', h.context);
   assert.equal(result.ok, true);
-  assert.equal(result.data.version, '1.1.0');
+  assert.equal(result.data.version, '1.1.1');
   assert.equal(result.data.backgroundMode, 'persistent');
 });
 
@@ -108,4 +108,74 @@ test('completed commands clear their timeout instead of accumulating timers', as
   const h = harness(); await flush();
   await vm.runInContext('withTimeout(execute({ type: "PING" }), 10000)', h.context);
   assert.equal([...h.timers.values()].some(t => t.ms === 10000), false);
+});
+
+const deferred = () => {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  return { promise, resolve };
+};
+const ping = h => vm.runInContext('execute({ type: "PING" })', h.context);
+
+test('failed history writes retain pending data and recover with backoff', async () => {
+  let writes = 0;
+  const h = harness({ storage: { set: async () => {
+    if (++writes === 1) throw new Error('database busy with private URLs');
+  } }, tabs: { query: async () => [{ url: 'https://example.com', active: true }] } });
+  await flush();
+  assert.equal((await ping(h)).data.activityPersistence.status, 'retrying');
+  assert.equal((await ping(h)).data.activityPersistence.pending, true);
+  assert.ok(h.requests.some(r => r.url.includes('/poll?')));
+  await h.fire(1000);
+  assert.equal(writes, 2);
+  assert.equal((await ping(h)).data.activityPersistence.status, 'saved');
+  assert.equal((await ping(h)).data.activityPersistence.pending, false);
+});
+
+test('writes serialize and coalesce events received while a write is pending', async () => {
+  const gate = deferred(), payloads = [];
+  const h = harness({ storage: { set: value => {
+    payloads.push(value); return payloads.length === 1 ? gate.promise : Promise.resolve();
+  } }, tabs: { query: async () => [{ url: 'https://example.com', active: false }] } });
+  await flush();
+  vm.runInContext('touch("https://example.com"); touch("https://example.com")', h.context);
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0].activity['https://example.com'].lastActive, null);
+  gate.resolve(); await flush(); await h.fire(1000);
+  assert.equal(payloads.length, 2);
+  assert.ok(payloads[1].activity['https://example.com'].lastActive);
+  assert.equal((await ping(h)).data.activityPersistence.pending, false);
+});
+
+test('failed history reads never overwrite stored data and retry before writing', async () => {
+  let reads = 0, writes = 0;
+  const h = harness({ storage: {
+    get: async () => { if (++reads === 1) throw new Error('unavailable'); return {}; },
+    set: async () => { writes++; },
+  } });
+  await flush(); assert.equal(writes, 0);
+  await h.fire(1000); assert.equal(writes, 1);
+});
+
+test('late history reads preserve first-seen dates and intervening activity', async () => {
+  const gate = deferred(); let saved;
+  const h = harness({ storage: { get: () => gate.promise, set: async value => { saved = value; } },
+    tabs: { query: async () => [{ url: 'https://example.com', active: true }] } });
+  vm.runInContext('touch("https://example.com")', h.context);
+  gate.resolve({ activity: { 'https://example.com': { firstSeen: 100, lastActive: 200 } } });
+  await flush();
+  assert.equal(saved.activity['https://example.com'].firstSeen, 100);
+  assert.ok(saved.activity['https://example.com'].lastActive > 200);
+});
+
+test('closed URLs are pruned but navigation during a tab query is retained', async () => {
+  const gate = deferred(); let saved;
+  const h = harness({ storage: { get: async () => ({ activity: {
+    'https://closed.example': { firstSeen: 100, lastActive: null },
+  } }), set: async value => { saved = value; } }, tabs: { query: () => gate.promise } });
+  await flush();
+  vm.runInContext('touch("https://new.example")', h.context);
+  gate.resolve([]); await flush();
+  assert.equal(saved.activity['https://closed.example'], undefined);
+  assert.ok(saved.activity['https://new.example'].lastActive);
 });

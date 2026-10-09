@@ -36,9 +36,11 @@ struct SafariTarget: Identifiable, Hashable {
     var activeTabURL: String
     var tabCount: Int
     var isFocused: Bool
-    /// Screen geometry, sent with the open command so the extension can resolve the
-    /// window itself rather than trusting an id that may have been reassigned.
+    /// AppleScript geometry, retained for diagnostics and native window matching.
     var bounds: AppleScriptProbe.Bounds?
+    /// The matched extension's geometry. Its vertical origin can differ from
+    /// AppleScript on secondary displays; OPEN must use the extension's coordinates.
+    var extensionBounds: AppleScriptProbe.Bounds? = nil
 
     /// True once this target can be opened into without waking anything.
     var isWarm: Bool { profileUUID != nil && windowId != nil }

@@ -52,6 +52,22 @@ struct RoutingRegressionTests {
         try expect(parsed.first?.activeTabURL == "" && parsed.first?.tabCount == 1,
                    "A real empty Start Page tab must remain a destination")
 
+        let repeated = AppleScriptProbe.parseWindows("""
+        10\tHome — Example\thttps://example.com\tExample\t4\t0,30,1920,1080
+        10\tHome — Example\thttps://example.com\tExample\t4\t0,30,1920,1080
+        11\tSocial — Example\thttps://example.com\tExample\t4\t0,30,1920,1080
+        12\tHome — Example\thttps://example.com\tExample\t4\t1920,30,3840,1080
+        """)
+        try expect(repeated.map(\.appleScriptID) == [10, 11, 12],
+                   "Duplicate window IDs must be removed while distinct windows with the same title remain")
+        let invalidThenValid = AppleScriptProbe.parseWindows("""
+        10\tHome — Example\t\t\t0\t0,30,1920,1080
+        10\tHome — Example\t\t\t4\tinvalid
+        10\tHome — Example\t\t\t4\t0,30,1920,1080
+        """)
+        try expect(invalidThenValid.count == 1 && invalidThenValid[0].tabCount == 4,
+                   "An invalid duplicate must not hide the valid window record")
+
         let port = UInt16.random(in: 55000...59000)
         let server = try BridgeServer(port: port, token: "isolated-routing-test")
         server.statusProvider = { profiles, activity in

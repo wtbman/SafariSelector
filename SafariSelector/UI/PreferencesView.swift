@@ -22,6 +22,8 @@ struct PreferencesView: View {
     @ObservedObject var store: TargetStore
 
     @State private var profiles: [String] = []
+    @State private var revealingWindow = false
+    @State private var revealError: String?
 
     var body: some View {
         TabView {
@@ -212,7 +214,7 @@ struct PreferencesView: View {
     private var profilesTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Name each Safari profile. Use the tab group hints to recognize profiles you haven't named yet.")
+                Text("Name each Safari profile. Use the tab group hints or Show Window to bring a profile's Safari window forward and recognize it.")
                     .font(.system(size: 16))
                 Text("Saved profiles stay listed even when their windows are closed or their extension is asleep. Counts show open browsing windows, including previously identified profiles. To discover a missing profile, open one of its Safari windows and press Refresh. The link picker lists open windows, not every saved tab group.")
                     .font(.system(size: 15))
@@ -241,18 +243,86 @@ struct PreferencesView: View {
                             }
                         }
                         Spacer()
-                        Text(windowSummary(uuid))
-                            .font(.system(size: 16))
-                            .foregroundStyle(.secondary)
-                            .fixedSize()
-                            .padding(.top, 3)
+                        VStack(alignment: .trailing, spacing: 6) {
+                            Text(windowSummary(uuid))
+                                .font(.system(size: 16))
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
+                            if store.windows(for: uuid).contains(where: { !$0.isWarm }) {
+                                Text("Uses remembered ownership")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .help("Some windows are assigned from previous observations because no matching extension snapshot is available.")
+                            }
+                            revealControl(for: uuid)
+                        }
+                        .padding(.top, 3)
                     }
                     .padding(.vertical, 2)
                 }
             }
-            Button("Refresh") { store.rebuild() }
+            if let revealError {
+                Text(revealError)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if store.scanFailed {
+                Text("Couldn't refresh Safari windows. Showing the last known list; press Refresh to try again.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button("Refresh") {
+                revealError = nil
+                store.rebuild()
+            }
         }
         .padding(14)
+    }
+
+    @ViewBuilder
+    private func revealControl(for uuid: String) -> some View {
+        let windows = store.windows(for: uuid).filter { $0.appleScriptWindowID != nil }
+        if windows.count > 1 {
+            Menu("Show Window") {
+                ForEach(windows, id: \.rowKey) { window in
+                    Button(revealLabel(window)) { reveal(window) }
+                }
+            }
+            .fixedSize()
+            .disabled(revealingWindow)
+            .help("Choose an open Safari window in this profile to bring forward.")
+        } else {
+            Button("Show Window") {
+                if let window = windows.first { reveal(window) }
+            }
+            .disabled(windows.isEmpty || revealingWindow)
+            .help(windows.isEmpty
+                  ? "This profile has no open window to show."
+                  : "Bring this profile's Safari window forward without opening a tab.")
+        }
+    }
+
+    private func revealLabel(_ window: SafariTarget) -> String {
+        let title = window.activeTabTitle.isEmpty ? "Untitled tab" : window.activeTabTitle
+        // The ID distinguishes windows even when both group and page titles match.
+        return "\(window.displayLabel) — \(title) (window \(window.appleScriptWindowID ?? -1))"
+    }
+
+    private func reveal(_ window: SafariTarget) {
+        guard let id = window.appleScriptWindowID, !revealingWindow else { return }
+        revealingWindow = true
+        revealError = nil
+        AppleScriptProbe.queue.async {
+            let succeeded = AppleScriptProbe.focus(windowID: id)
+            DispatchQueue.main.async {
+                if !succeeded {
+                    revealError = "Couldn't show the Safari window. It may have closed, or Safari automation access may be unavailable. Refresh and try again."
+                }
+                store.rebuild { revealingWindow = false }
+            }
+        }
     }
 
     private func profileHints(_ uuid: String) -> some View {

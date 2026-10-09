@@ -91,7 +91,12 @@ If the page remains unavailable, the normal Safari fallback still applies.
 
 ### Labelling
 
-`TargetStore` joins the two views on the **active tab URL**, which both sides observe.
+`TargetStore` joins the two views only when the active page URL/title and tab count
+agree, the full window bounds are nearby, and the pairing is unique in both
+directions. Overlapping windows and repeated pages are common, so geometry or URL
+alone can assign a window to the wrong profile and poison remembered ownership.
+Unresolved windows remain visible; Settings identifies counts that use remembered
+ownership while waiting for an unambiguous extension snapshot.
 
 A window showing loose tabs is titled with the *profile* name, so a title prefix equal to the
 profile's own label is treated as "loose tabs" rather than a tab group.

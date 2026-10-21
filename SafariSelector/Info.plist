@@ -50,7 +50,7 @@
 		</dict>
 	</array>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>SafariSelector reads your Safari window titles, and can switch Safariu2019s Allow Unsigned Extensions setting back on when Safari resets it.</string>
+	<string>SafariSelector reads Safari window titles and focuses the window you choose when opening links.</string>
 	<key>SFSafariWebExtensionConverterVersion</key>
 	<string>26.6</string>
 </dict>

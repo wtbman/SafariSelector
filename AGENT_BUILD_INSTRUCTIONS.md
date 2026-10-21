@@ -12,9 +12,13 @@ for the measured behaviour every decision here rests on.
 - Keep DerivedData outside the repo: `-derivedDataPath /tmp/SafariSelector-DD`. Building into a
   directory whose filesystem attaches extended attributes makes codesigning fail with
   `resource fork, Finder information, or similar detritus not allowed`.
-- If there is no Developer ID (`security find-identity -v -p codesigning` → `0 valid identities`),
-  build ad-hoc with `CODE_SIGN_IDENTITY="-"` and expect to use Safari's
-  *Develop → Allow Unsigned Extensions*.
+- For a supported installation, use the paid account already configured in Xcode
+  and `scripts/release.sh` to archive, Developer ID sign and notarize the app.
+  An Apple Development identity alone is not a Developer ID distribution identity.
+  Check that the Mac is unlocked before diagnosing missing accounts or identities;
+  preserve shared certificates and keep all account/signing material outside Git.
+- Only for explicit local debugging, `scripts/install.sh --development` builds
+  ad-hoc and requires Safari's *Allow Unsigned Extensions*.
 
 ---
 
@@ -170,7 +174,16 @@ user name profiles in Settings — Safari never exposes a profile name, only a U
 
 ## Task 10 — Packaging
 
-`scripts/install.sh`: build, `ditto` to `~/Applications`, `lsregister -f -R -trusted`, launch.
+`scripts/release.sh`: archive a hardened Release build with the existing paid Xcode
+account, export/upload through the Developer ID notarization channel, then
+`-exportNotarizedApp`. Output stays outside the repository. Preserve the archive
+while Apple processes it and resume `export` rather than submitting duplicates.
+
+`scripts/install.sh /path/to/notarized/SafariSelector.app`: verify Developer ID
+signatures on both bundles, stapled ticket and Gatekeeper before staging in
+`/Applications`. Save a recovery ZIP, replace, register and launch. Keep the app's
+Apple Events entitlement for hardened-runtime Safari automation. Developer ID builds
+must not enable Safari's unsigned-extension mode, even if an old setting requests it.
 
 **Never `codesign --deep`** the installed bundle — it strips the appex entitlements and
 `pluginkit` then silently refuses to register the extension. Leave the build's signature intact.

@@ -10,6 +10,7 @@
 
 import AppKit
 import SafariServices
+import Security
 import os.log
 
 /// Getting the user to the extension when Safari has let it stop.
@@ -27,6 +28,23 @@ import os.log
 enum SafariExtension {
 
     static let identifier = "cc.wtb.SafariSelector.Extension"
+
+    /// Check the actual installed signatures, rather than a build flag. Development
+    /// builds still need the optional unsigned-extension workaround.
+    static let isDeveloperIDBuild: Bool = {
+        let requirementText = "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+        var requirement: SecRequirement?
+        guard SecRequirementCreateWithString(requirementText as CFString, [], &requirement) == errSecSuccess,
+              let requirement else { return false }
+        let app = Bundle.main.bundleURL
+        let paths = [app, app.appendingPathComponent("Contents/PlugIns/SafariSelector Extension.appex")]
+        return paths.allSatisfy { path in
+            var code: SecStaticCode?
+            guard SecStaticCodeCreateWithPath(path as CFURL, [], &code) == errSecSuccess,
+                  let code else { return false }
+            return SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess
+        }
+    }()
 
     private static let log = Logger(subsystem: "cc.wtb.SafariSelector", category: "extension")
 

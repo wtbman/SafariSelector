@@ -122,15 +122,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         1. Safari › Settings › Extensions
         2. Untick SafariSelector, then tick it again
 
-        If it won't turn on, check Safari › Develop › Developer Settings… › Allow unsigned extensions.
+        \(SafariExtension.isDeveloperIDBuild ? "" : "If it won't turn on, check Safari › Develop › Developer Settings… › Allow unsigned extensions.")
         """
         alert.addButton(withTitle: "Open Safari Extension Settings")
-        alert.addButton(withTitle: "Open Developer Settings")
+        if !SafariExtension.isDeveloperIDBuild {
+            alert.addButton(withTitle: "Open Developer Settings")
+        }
         alert.addButton(withTitle: "Not Now")
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn: SafariExtension.showSettings()
-        case .alertSecondButtonReturn: UnsignedExtensionsGuard.showDeveloperSettings()
+        case .alertSecondButtonReturn where !SafariExtension.isDeveloperIDBuild:
+            UnsignedExtensionsGuard.showDeveloperSettings()
         default: break
         }
     }
@@ -361,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Safari resets "Allow Unsigned Extensions" on every launch, which silently
     /// disables the extension and sends every link to the wrong window.
     private func watchForSafariLaunches() {
+        guard !SafariExtension.isDeveloperIDBuild else { return }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
         ) { [weak self] note in

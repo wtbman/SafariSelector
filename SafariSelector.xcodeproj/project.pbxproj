@@ -1321,6 +1321,8 @@
 				<string>YES</string>
 				<key>SWIFT_VERSION</key>
 				<string>5.0</string>
+				<key>CODE_SIGN_ENTITLEMENTS</key>
+				<string>SafariSelector/SafariSelector.entitlements</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
@@ -1391,6 +1393,8 @@
 				<string>YES</string>
 				<key>SWIFT_VERSION</key>
 				<string>5.0</string>
+				<key>CODE_SIGN_ENTITLEMENTS</key>
+				<string>SafariSelector/SafariSelector.entitlements</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>

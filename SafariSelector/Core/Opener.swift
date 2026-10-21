@@ -77,7 +77,7 @@ final class Opener {
     /// Focusing that window fires `windows.onFocusChanged` inside its profile, which
     /// starts the worker; it then connects and reports its windows, and the window we
     /// want appears, paired by geometry like every other window.
-    private func resolve(_ target: SafariTarget) async -> SafariTarget? {
+    func resolve(_ target: SafariTarget) async -> SafariTarget? {
         guard let scriptID = target.appleScriptWindowID else { return nil }
 
         // A snapshot only identifies a window; its worker may have gone to sleep
@@ -101,7 +101,14 @@ final class Opener {
             }
             if let t = store.targets.first(where: { $0.appleScriptWindowID == scriptID }),
                let p = t.profileUUID, t.windowId != nil {
-                let ping = await bridge.send(.relay(type: "PING", args: nil), to: p, timeout: 1)
+                // Safari can take several seconds to resume a healthy background
+                // page. Repeating one-second probes discards each late reply and
+                // falsely falls back even though the extension is responding.
+                // Keep one probe alive within the existing overall wake budget.
+                let remaining = deadline.timeIntervalSinceNow
+                guard remaining > 0 else { break }
+                let ping = await bridge.send(.relay(type: "PING", args: nil), to: p,
+                                             timeout: min(8, remaining))
                 if ping?.ok == true {
                     await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
                         store.rebuild { c.resume() }

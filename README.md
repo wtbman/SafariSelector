@@ -24,7 +24,60 @@ alone is sufficient. SafariSelector combines them:
 See [`docs/SPIKE-FINDINGS.md`](docs/SPIKE-FINDINGS.md) for the capability probe this design rests
 on, and [`AGENT_BUILD_INSTRUCTIONS.md`](AGENT_BUILD_INSTRUCTIONS.md) for the build plan.
 
-## Building
+## Supported installation
+
+Safari 18.4 and later supports Safari web extensions distributed outside the Mac
+App Store when the containing app is **Developer ID signed and notarized**.
+This installation does not need **Allow Unsigned Extensions**. An Apple Development
+certificate alone is insufficient for this distribution channel.
+
+Use the existing paid Apple account in Xcode. Existing local signing keys stay in
+this Mac's Keychain and can serve multiple projects; Xcode may use Apple's managed
+cloud signing for the Developer ID export. Never revoke another app's certificate
+to repair this app. Team IDs, account details and signing assets stay outside Git.
+
+```bash
+export DEVELOPMENT_TEAM='<your paid team ID>'
+export RELEASE_DIR="$(mktemp -d /tmp/SafariSelector-release.XXXXXX)"
+./scripts/release.sh
+./scripts/install.sh "$RELEASE_DIR/Export/SafariSelector.app"
+```
+
+The release script archives a hardened Release build, uses Xcode's existing account
+to sign and upload it to Apple's notary service, and exports the notarized app.
+Xcode may create a Developer ID Application certificate when none exists. If Apple
+is still processing, keep the same `RELEASE_DIR` and resume with
+`./scripts/release.sh export`; do not rebuild or resubmit merely to wait.
+The `archive`, `submit` and `export` phases can also run separately.
+This upload is for Apple's notarization service. It does not create an App Store
+listing, request App Store review, or publish the app.
+
+The installer checks the app and extension signatures, stapled ticket and Gatekeeper
+assessment before replacing `/Applications/SafariSelector.app`. It saves the previous
+app as a recovery ZIP under the app's Application Support directory and preserves
+settings. Enable SafariSelector in Safari Settings → Extensions for each profile.
+On a Developer ID build, the app hides and ignores the unsigned-extension workaround,
+including a previously saved setting. Safari window automation may need macOS consent
+again after changing signing identity.
+
+When migrating from an unsigned build, macOS may also ask permission for
+**SafariSelector Extension** to use its existing application data. Approve that
+system dialog to retain the extension's container. Until it is answered, macOS
+can hold the native handler in sandbox initialization before any app code runs;
+the extension can appear enabled while the bridge has no connections. Do not
+delete the container or reset shared signing certificates to resolve this wait.
+After approval, reload the extension if its background pages were left waiting.
+Safari may ignore an automated attempt to enable the extension; use the checkbox
+directly in Safari Settings when that happens.
+
+Changing from unsigned to Developer ID signing can also change Safari's opaque
+extension profile identifiers. Verify saved aliases and rule destinations against
+the live profiles after migration. Match identities through a known profile's
+window; do not infer them from UUID order or delete settings to clear old names.
+
+See [Apple's distribution documentation](https://developer.apple.com/documentation/safariservices/distributing-your-safari-web-extension).
+
+## Development builds
 
 ```bash
 xcodebuild -project SafariSelector.xcodeproj -scheme SafariSelector \
@@ -37,14 +90,19 @@ codesigning fail with `resource fork, Finder information, or similar detritus no
 Then install it:
 
 ```bash
-./scripts/install.sh
+./scripts/install.sh --development
 ```
+
+This explicit debugging path uses ad-hoc signing and requires Safari's **Allow
+Unsigned Extensions**, which resets at Safari launch. It refuses to overwrite an
+installed Developer ID release.
 
 Run the settings and auto-select regression checks without launching Safari:
 
 ```bash
 ./scripts/test-config.sh
 bash scripts/test-routing.sh
+bash scripts/test-opener.sh
 bash scripts/test-attribution.sh
 node --test tests/ExtensionRegressionTests.cjs
 ```
@@ -82,6 +140,8 @@ Before routing a link, the app focuses the chosen window and waits for its exten
 answer a PING. An enabled extension can still have a sleeping background worker, so an old
 snapshot is not proof that it is ready. Timed-out queued commands are discarded instead of
 being replayed after Safari has already received the fallback link.
+Readiness allows a single PING up to eight seconds within the ten-second wake
+budget, so a healthy but slow reply is not repeatedly discarded after one second.
 
 The macOS extension uses a Manifest V2 persistent background page. Safari suspended
 the former Manifest V3 worker even with a pending poll, and focusing a window did

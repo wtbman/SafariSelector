@@ -88,6 +88,7 @@ enum UnsignedExtensionsGuard {
 
     @discardableResult
     static func ensureEnabled() -> Outcome {
+        guard !SafariExtension.isDeveloperIDBuild else { return .alreadyOn }
         guard hasAccessibilityPermission else {
             log.info("no Accessibility permission; cannot manage the Develop menu")
             return .noPermission

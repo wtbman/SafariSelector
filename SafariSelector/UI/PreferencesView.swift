@@ -125,6 +125,14 @@ struct PreferencesView: View {
             }
             GroupBox("Safari extension") {
                 VStack(alignment: .leading, spacing: 8) {
+                    if SafariExtension.isDeveloperIDBuild {
+                        Text("Developer ID signed")
+                            .font(.headline)
+                        Text("This build uses Apple Developer ID signing. Allow Unsigned Extensions and its Accessibility workaround are not needed. Enable SafariSelector in Safari’s Extensions settings for each profile you use.")
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Open Safari Extension Settings…") { SafariExtension.showSettings() }
+                    } else {
                     Toggle("Keep \u{201C}Allow Unsigned Extensions\u{201D} switched on",
                            isOn: Binding(
                             get: { config.stored.autoAllowUnsignedExtensions },
@@ -164,6 +172,7 @@ struct PreferencesView: View {
                             .font(.system(size: 15))
                             .foregroundStyle(.secondary)
                     }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(6)
@@ -176,6 +185,7 @@ struct PreferencesView: View {
     @State private var lastCheck = ""
 
     private func refreshGuard() {
+        guard !SafariExtension.isDeveloperIDBuild else { return }
         guard UnsignedExtensionsGuard.hasAccessibilityPermission else {
             guardStatus = "Accessibility permission not granted."
             return
